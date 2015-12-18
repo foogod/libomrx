@@ -7,6 +7,10 @@
 
 #include "omrx.h"
 
+//TODO: make sure zero-length arrays are handled properly (malloc, read/write, etc)
+
+#define LOG(...) fprintf(stderr, __VA_ARGS__); fflush(stderr);
+
 #define OMRX_ERRMSG_BUFSIZE 4096
 
 typedef struct omrx_attr *omrx_attr_t;
@@ -14,7 +18,6 @@ typedef struct omrx_attr *omrx_attr_t;
 struct omrx {
     FILE *fp;
     char *filename;
-    uint16_t version[2];
     char *message;
     omrx_log_func_t *log_error;
     omrx_log_func_t *log_warning;
@@ -148,7 +151,7 @@ omrx_status_t omrx_os_error(omrx_t omrx, const char *fmt, ...) {
     size_t msglen;
     omrx_status_t errcode;
 
-    if (errno == 0 && feof(omrx->fp)) {
+    if (errno == 0 && omrx->fp && feof(omrx->fp)) {
         // We must have gotten here because of a short read due to hitting
         // EOF unexpectedly.
         errcode = OMRX_ERR_EOF;
@@ -218,7 +221,7 @@ static omrx_status_t skip_data(omrx_t omrx, off_t size) {
 }
 
 static omrx_status_t read_data(omrx_t omrx, off_t size, void *dest) {
-    if (fread(dest, size, 1, omrx->fp) != size) {
+    if (fread(dest, size, 1, omrx->fp) != 1) {
         return omrx_os_error(omrx, "Read error");
     }
 
@@ -226,7 +229,9 @@ static omrx_status_t read_data(omrx_t omrx, off_t size, void *dest) {
 }
 
 static omrx_status_t write_data(omrx_t omrx, off_t size, const void *src, FILE *fp) {
-    if (fwrite(src, size, 1, fp) != size) {
+    if (!size) return OMRX_OK;
+
+    if (fwrite(src, size, 1, fp) != 1) {
         return omrx_os_error(omrx, "Write error");
     }
 
@@ -427,6 +432,7 @@ static omrx_status_t add_child_chunk(omrx_chunk_t parent, omrx_chunk_t child) {
 static omrx_status_t omrx_scan(omrx_t omrx) {
     off_t file_pos;
     uint8_t tag[4];
+    uint32_t ver;
 
     file_pos = ftello(omrx->fp);
     if (file_pos < 0) {
@@ -443,6 +449,14 @@ static omrx_status_t omrx_scan(omrx_t omrx) {
         omrx->top_chunk = NULL;
     }
     CHECK_ERR(read_next_chunk(omrx));
+    CHECK_ERR(omrx_get_version(omrx, &ver));
+    if (ver > OMRX_VERSION) {
+        if (OMRX_VER_MAJOR(ver) > OMRX_VER_MAJOR(OMRX_VERSION)) {
+            return omrx_error(omrx, OMRX_ERR_BAD_VER, "File version (%d.%d) is unsupported by this software (software version is %d.%d).", OMRX_VER_MAJOR(ver), OMRX_VER_MINOR(ver), OMRX_VER_MAJOR(OMRX_VERSION), OMRX_VER_MINOR(OMRX_VERSION));
+        } else {
+            omrx_warning(omrx, OMRX_WARN_BAD_VER, "File version (%d.%d) is greater than supported version (%d.%d).  Some features may be unavailable.", OMRX_VER_MAJOR(ver), OMRX_VER_MINOR(ver), OMRX_VER_MAJOR(OMRX_VERSION), OMRX_VER_MINOR(OMRX_VERSION));
+        }
+    }
     while (omrx->context) {
         CHECK_ERR(read_next_chunk(omrx));
     }
@@ -500,7 +514,7 @@ static omrx_status_t read_next_chunk(omrx_t omrx) {
                 CHECK_ERR(freeze_attr_data(attr));
                 chunk->id = attr->data;
             } else {
-                omrx_warning(omrx, OMRX_WARN_BADATTR, "%s:id attribute has wrong type (%04x).  Ignored.", &chunk->tag, attr_hdr.datatype);
+                omrx_warning(omrx, OMRX_WARN_BAD_ATTR, "%s:id attribute has wrong type (%04x).  Ignored.", &chunk->tag, attr_hdr.datatype);
                 CHECK_ERR(skip_data(omrx, attr_hdr.size));
             }
         } else {
@@ -533,10 +547,10 @@ static omrx_status_t read_attr_subheader_array(omrx_attr_t attr) {
     uint16_t cols;
 
     if (attr->size < 2) {
-        omrx_warning(omrx, OMRX_WARN_BADATTR, "%s:%04x attribute has bad length.", attr->chunk->tag, attr->id);
+        omrx_warning(omrx, OMRX_WARN_BAD_ATTR, "%s:%04x attribute has bad length.", attr->chunk->tag, attr->id);
         CHECK_ERR(skip_data(omrx, attr->size));
         attr->size = 0;
-        return OMRX_WARN_BADATTR;
+        return OMRX_WARN_BAD_ATTR;
     }
     CHECK_ERR(read_data(omrx, 2, &cols));
     attr->cols = UINT16_FTOH(cols);
@@ -627,21 +641,25 @@ bool do_omrx_init(int api_ver) {
 omrx_t omrx_new(void) {
     omrx_t omrx = malloc(sizeof(struct omrx));
 
-    omrx->version[0] = OMRX_MINVER_MAJOR;
-    omrx->version[1] = OMRX_MINVER_MINOR;
+    if (!omrx) {
+        return NULL;
+    }
     omrx->message = malloc(OMRX_ERRMSG_BUFSIZE);
     if (!omrx->message) {
         // FIXME: print an error message
-        free(omrx);
+        omrx_free(omrx);
         return NULL;
     }
     omrx->log_error = default_log_error;
     omrx->log_warning = default_log_warning;
-    omrx->top_chunk = new_chunk(omrx, "OMRX"); //FIXME: attrs?
+    omrx->top_chunk = new_chunk(omrx, "OMRX");
     if (!omrx->top_chunk) {
         // FIXME: print an error message
-        free(omrx->message);
-        free(omrx);
+        omrx_free(omrx);
+        return NULL;
+    }
+    if (omrx_set_attr_uint32(omrx->top_chunk, OMRX_ATTR_VER, OMRX_MIN_VERSION) < 0) {
+        omrx_free(omrx);
         return NULL;
     }
 
@@ -662,11 +680,20 @@ omrx_status_t omrx_free(omrx_t omrx) {
     if (omrx->filename) {
         free(omrx->filename);
     }
-    rc = free_all_chunks(omrx->top_chunk);
-    if (rc != OMRX_OK) status = rc;
+    if (omrx->top_chunk) {
+        rc = free_all_chunks(omrx->top_chunk);
+        if (rc != OMRX_OK) status = rc;
+    }
+    if (omrx->message) {
+        free(omrx->message);
+    }
     free(omrx);
 
     return status;
+}
+
+omrx_status_t omrx_get_version(omrx_t omrx, uint32_t *ver) {
+    return omrx_get_attr_uint32(omrx->top_chunk, OMRX_ATTR_VER, ver);
 }
 
 omrx_status_t omrx_open(omrx_t omrx, const char *filename) {
@@ -805,6 +832,60 @@ omrx_status_t omrx_set_attr_str(omrx_chunk_t chunk, uint16_t id, omrx_ownership_
     return OMRX_OK;
 }
 
+static uint32_t get_elem_size(uint16_t dtype, uint32_t total_size) {
+    if (OMRX_IS_SIMPLE_DTYPE(dtype) || OMRX_IS_ARRAY_DTYPE(dtype)) {
+        // For simple and array types, the low two bits always indicate the
+        // element width.
+        return OMRX_GET_ELEMSIZE(dtype);
+    }
+    switch (dtype) {
+        case OMRX_DTYPE_UTF8:
+        case OMRX_DTYPE_RAW:
+            return total_size;
+    }
+
+    // We don't know about this type.  The only thing we can do is return 0.
+    return 0;
+}
+
+omrx_status_t omrx_get_attr_info(omrx_chunk_t chunk, uint16_t id, struct omrx_attr_info *info) {
+    omrx_attr_t attr = NULL;
+
+    CHECK_ERR(find_attr(chunk, id, &attr));
+    if (!attr) {
+        info->exists = false;
+        return OMRX_NONE;
+    }
+    info->exists = true;
+    info->encoded_type = attr->datatype;
+    info->size = attr->size;
+    info->elem_size = get_elem_size(attr->datatype, attr->size);
+    if (OMRX_IS_ARRAY_DTYPE(attr->datatype)) {
+        info->elem_type = OMRX_GET_ELEMTYPE(attr->datatype);
+        info->is_array = true;
+        info->cols = attr->cols;
+        if (info->elem_size) {
+            info->rows = (attr->size / attr->cols) / info->elem_size;
+        } else {
+            // We don't know the intrinsic size of this type, so we can't
+            // calculate the number of rows.
+            info->rows = 0;
+        }
+    } else {
+        info->elem_type = info->encoded_type;
+        info->is_array = false;
+        info->cols = 0;
+        info->rows = 0;
+        if (!info->elem_size) {
+            // We don't know the size of this type.  Since we're not an array,
+            // just assume that it takes up the whole size of the data portion.
+            info->elem_size = info->size;
+        }
+    }
+
+    return OMRX_OK;
+}
+
 omrx_status_t omrx_get_attr_str(omrx_chunk_t chunk, uint16_t id, char **dest) {
     omrx_t omrx = chunk->omrx;
     omrx_attr_t attr = NULL;
@@ -825,7 +906,49 @@ omrx_status_t omrx_get_attr_str(omrx_chunk_t chunk, uint16_t id, char **dest) {
     return OMRX_OK;
 }
 
-omrx_status_t omrx_set_attr_float_array(omrx_chunk_t chunk, uint16_t id, omrx_ownership_t own, uint16_t cols, uint32_t rows, float *data) {
+omrx_status_t omrx_set_attr_uint32(omrx_chunk_t chunk, uint16_t id, uint32_t value) {
+    omrx_t omrx = chunk->omrx;
+    omrx_attr_t attr = NULL;
+
+    CHECK_ERR(find_attr(chunk, id, &attr));
+    if (!attr) {
+        attr = new_attr(chunk, id, OMRX_DTYPE_U32, 4, -1);
+        CHECK_ALLOC(omrx, attr);
+        CHECK_ERR(chunk_add_attr(chunk, attr));
+    }
+    if (attr->datatype != OMRX_DTYPE_U32) {
+        return omrx_error(omrx, OMRX_ERR_BAD_DTYPE, "Attempt to set uint32 value for non-uint32 attribute %s:%04x (type=%04x).", chunk->tag, id, attr->datatype);
+    }
+    if (!attr->data) {
+        attr->data = malloc(4);
+        CHECK_ALLOC(omrx, attr->data);
+    }
+    *((uint32_t *)attr->data) = value;
+
+    return OMRX_OK;
+}
+
+omrx_status_t omrx_get_attr_uint32(omrx_chunk_t chunk, uint16_t id, uint32_t *dest) {
+    omrx_t omrx = chunk->omrx;
+    omrx_attr_t attr = NULL;
+
+    CHECK_ERR(find_attr(chunk, id, &attr));
+    if (!attr) {
+        *dest = 0;
+        return OMRX_NONE;
+    }
+    if (attr->datatype != OMRX_DTYPE_U32) {
+        return omrx_error(omrx, OMRX_ERR_BAD_DTYPE, "Attempt to get uint32 value of non-uint32 attribute %s:%04x (type=%04x).", chunk->tag, id, attr->datatype);
+    }
+    if (!attr->data) {
+        CHECK_ERR(load_attr_data(attr));
+    }
+    *dest = *((uint32_t *)attr->data);
+
+    return OMRX_OK;
+}
+
+omrx_status_t omrx_set_attr_float32_array(omrx_chunk_t chunk, uint16_t id, omrx_ownership_t own, uint16_t cols, uint32_t rows, float *data) {
     omrx_t omrx = chunk->omrx;
     omrx_attr_t attr = NULL;
 
@@ -883,6 +1006,10 @@ omrx_status_t omrx_write(omrx_t omrx, const char *filename) {
         return omrx_os_error(omrx, "Cannot open %s for writing", filename);
     }
     CHECK_ERR(write_chunk(omrx->top_chunk, fp));
+
+    if (fclose(fp)) {
+        return omrx_os_error(omrx, "Close failed");
+    }
 
     return OMRX_OK;
 }
