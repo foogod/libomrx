@@ -11,6 +11,12 @@
 
 #define LOG(...) fprintf(stderr, __VA_ARGS__); fflush(stderr);
 
+#ifdef LOGIO
+  #define LOG_IO(...) LOG(__VA_ARGS__)
+#else
+  #define LOG_IO(...) /* do nothing */
+#endif
+
 #define OMRX_ERRMSG_BUFSIZE 4096
 
 typedef struct omrx_attr *omrx_attr_t;
@@ -66,8 +72,8 @@ struct omrx_attr {
 #define CHECK_ALLOC(omrx, x) if ((x) == NULL) { return omrx_os_error((omrx), "Memory allocation failed"); }
 #define CHECK_ERR(x) do { omrx_status_t __x = (x); if (__x < 0) return __x; } while (0);
 
-#define CHUNKHDR_SIZE 8
-#define ATTRHDR_SIZE 18
+#define CHUNKHDR_SIZE 6
+#define ATTRHDR_SIZE 8
 
 struct chunk_header {
     char tag[4];
@@ -205,6 +211,7 @@ omrx_status_t omrx_warning(omrx_t omrx, omrx_status_t errcode, const char *fmt, 
 ///////////////////////////////////
 
 static omrx_status_t seek_to_pos(omrx_t omrx, off_t pos) {
+    LOG_IO("- seek %lu\n", pos);
     if (fseeko(omrx->fp, pos, SEEK_SET) < 0) {
         return omrx_os_error(omrx, "Seek failed");
     }
@@ -213,6 +220,7 @@ static omrx_status_t seek_to_pos(omrx_t omrx, off_t pos) {
 }
 
 static omrx_status_t skip_data(omrx_t omrx, off_t size) {
+    LOG_IO("- skip %lu\n", size);
     if (fseeko(omrx->fp, size, SEEK_CUR) < 0) {
         return omrx_os_error(omrx, "Seek failed");
     }
@@ -224,12 +232,29 @@ static omrx_status_t read_data(omrx_t omrx, off_t size, void *dest) {
     if (fread(dest, size, 1, omrx->fp) != 1) {
         return omrx_os_error(omrx, "Read error");
     }
+#if LOGIO
+    LOG_IO("- read: ");
+    int i;
+    for (i = 0; i < size; i++) {
+        LOG_IO("%02x ", ((uint8_t *)dest)[i]);
+    }
+    LOG_IO("\n");
+#endif
 
     return OMRX_OK;
 }
 
 static omrx_status_t write_data(omrx_t omrx, off_t size, const void *src, FILE *fp) {
     if (!size) return OMRX_OK;
+
+#if LOGIO
+    LOG_IO("- write: ");
+    int i;
+    for (i = 0; i < size; i++) {
+        LOG_IO("%02x ", ((uint8_t *)src)[i]);
+    }
+    LOG_IO("\n");
+#endif
 
     if (fwrite(src, size, 1, fp) != 1) {
         return omrx_os_error(omrx, "Write error");
@@ -347,12 +372,10 @@ static omrx_status_t load_attr_data(omrx_attr_t attr) {
         attr->data = malloc(attr->size + 1);
         CHECK_ERR(read_data(omrx, attr->size, attr->data));
         ((char *)attr->data)[attr->size] = 0;
-    } else if (attr->datatype == OMRX_DTYPE_RAW) {
+    } else {
         attr->data = malloc(attr->size);
         CHECK_ALLOC(omrx, attr->data);
         CHECK_ERR(read_data(omrx, attr->size, attr->data));
-    } else {
-        return omrx_error(omrx, OMRX_ERR_BAD_DTYPE, "%s:%04x: Unrecognized datatype (%04x).  Cannot load attribute.", attr->chunk->tag, attr->id, attr->datatype);
     }
 
     return OMRX_OK;
@@ -472,6 +495,7 @@ static omrx_status_t read_next_chunk(omrx_t omrx) {
     off_t file_pos;
     uint32_t tagint;
     uint_fast16_t i;
+    uint_fast16_t attr_count;
 
     CHECK_ERR(read_data(omrx, CHUNKHDR_SIZE, &hdr));
     file_pos = ftello(omrx->fp);
@@ -483,15 +507,15 @@ static omrx_status_t read_next_chunk(omrx_t omrx) {
     // Make sure it looks like a valid tag and we're not just reading garbage
     // at this point (each byte should be in the range 0x40-0x7f)
     if ((tagint & 0xc0c0c0c0) != 0x40404040) {
-        return omrx_error(omrx, OMRX_ERR_BAD_CHUNK, "Invalid chunk tag found (%08x). File likely corrupted", tagint);
+        return omrx_error(omrx, OMRX_ERR_BAD_CHUNK, "Invalid chunk tag found (%08x). File likely corrupted.", tagint);
     }
 
     chunk = new_chunk(omrx, hdr.tag);
     CHECK_ALLOC(omrx, chunk);
     chunk->file_position = file_pos;
-    chunk->attr_count = UINT16_FTOH(hdr.count);
+    attr_count = UINT16_FTOH(hdr.count);
 
-    for (i=0; i < chunk->attr_count; i++) {
+    for (i=0; i < attr_count; i++) {
         CHECK_ERR(read_data(omrx, ATTRHDR_SIZE, &attr_hdr));
         attr_hdr.id = UINT16_FTOH(attr_hdr.id);
         attr_hdr.datatype = UINT16_FTOH(attr_hdr.datatype);
@@ -515,10 +539,10 @@ static omrx_status_t read_next_chunk(omrx_t omrx) {
                 chunk->id = attr->data;
             } else {
                 omrx_warning(omrx, OMRX_WARN_BAD_ATTR, "%s:id attribute has wrong type (%04x).  Ignored.", &chunk->tag, attr_hdr.datatype);
-                CHECK_ERR(skip_data(omrx, attr_hdr.size));
+                CHECK_ERR(skip_data(omrx, attr->size));
             }
         } else {
-            CHECK_ERR(skip_data(omrx, attr_hdr.size));
+            CHECK_ERR(skip_data(omrx, attr->size));
         }
         CHECK_ERR(chunk_add_attr(chunk, attr));
     }
@@ -544,7 +568,6 @@ static omrx_status_t read_next_chunk(omrx_t omrx) {
 
 static omrx_status_t read_attr_subheader_array(omrx_attr_t attr) {
     omrx_t omrx = attr->chunk->omrx;
-    uint16_t cols;
 
     if (attr->size < 2) {
         omrx_warning(omrx, OMRX_WARN_BAD_ATTR, "%s:%04x attribute has bad length.", attr->chunk->tag, attr->id);
@@ -552,8 +575,8 @@ static omrx_status_t read_attr_subheader_array(omrx_attr_t attr) {
         attr->size = 0;
         return OMRX_WARN_BAD_ATTR;
     }
-    CHECK_ERR(read_data(omrx, 2, &cols));
-    attr->cols = UINT16_FTOH(cols);
+    CHECK_ERR(read_data(omrx, 2, &attr->cols));
+    attr->cols = UINT16_FTOH(attr->cols);
     if (!attr->cols) {
         attr->cols = 1;
     }
@@ -726,50 +749,49 @@ omrx_chunk_t omrx_get_root_chunk(omrx_t omrx) {
     return omrx->top_chunk;
 }
 
-omrx_status_t omrx_get_first_chunk(omrx_t omrx, const char *tag, omrx_chunk_t *chunk) {
-    omrx_chunk_t ch = omrx->top_chunk;
+omrx_status_t omrx_get_first_chunk(omrx_chunk_t chunk, const char *tag, omrx_chunk_t *result) {
     uint32_t tagint = TAG_TO_TAGINT(tag);
 
-    while (ch->next) {
-        ch = ch->next;
-        if (ch->tagint == tagint) {
-            *chunk = ch;
+    chunk = chunk->first_child;
+    while (chunk) {
+        if (chunk->tagint == tagint) {
+            *result = chunk;
             return OMRX_OK;
         }
+        chunk = chunk->next;
     }
-    chunk = NULL;
+    *result = NULL;
     return OMRX_NONE;
 }
 
-omrx_status_t omrx_get_next_chunk(omrx_chunk_t chunk, omrx_chunk_t *next_chunk) {
-    omrx_chunk_t ch = chunk;
+omrx_status_t omrx_get_next_chunk(omrx_chunk_t chunk, omrx_chunk_t *result) {
     uint32_t tagint = chunk->tagint;
 
-    while (ch->next) {
-        ch = ch->next;
-        if (ch->tagint == tagint) {
-            *next_chunk = ch;
+    while (chunk->next) {
+        chunk = chunk->next;
+        if (chunk->tagint == tagint) {
+            *result = chunk;
             return OMRX_OK;
         }
     }
-    chunk = NULL;
+    *result = NULL;
     return OMRX_NONE;
 }
 
-omrx_status_t omrx_get_chunk_by_id(omrx_t omrx, const char *tag, const char *id, omrx_chunk_t *chunk) {
-    omrx_chunk_t ch = omrx->top_chunk;
+omrx_status_t omrx_get_chunk_by_id(omrx_chunk_t chunk, const char *tag, const char *id, omrx_chunk_t *result) {
     uint32_t tagint = TAG_TO_TAGINT(tag);
 
-    while (ch->next) {
-        ch = ch->next;
-        if (ch->tagint == tagint) {
-            if (ch->id && !strcmp(ch->id, id)) {
-                *chunk = ch;
+    chunk = chunk->first_child;
+    while (chunk) {
+        if (chunk->tagint == tagint) {
+            if (chunk->id && !strcmp(chunk->id, id)) {
+                *result = chunk;
                 return OMRX_OK;
             }
         }
+        chunk = chunk->next;
     }
-    chunk = NULL;
+    *result = NULL;
     return OMRX_NONE;
 }
 
@@ -973,6 +995,26 @@ omrx_status_t omrx_set_attr_float32_array(omrx_chunk_t chunk, uint16_t id, omrx_
     } else {
         attr->data = data;
     }
+
+    return OMRX_OK;
+}
+
+omrx_status_t omrx_get_attr_float32_array(omrx_chunk_t chunk, uint16_t id, float **dest) {
+    omrx_t omrx = chunk->omrx;
+    omrx_attr_t attr = NULL;
+
+    CHECK_ERR(find_attr(chunk, id, &attr));
+    if (!attr) {
+        *dest = 0;
+        return OMRX_NONE;
+    }
+    if (attr->datatype != OMRX_DTYPE_F32_ARRAY) {
+        return omrx_error(omrx, OMRX_ERR_BAD_DTYPE, "Attempt to get float32-array value of non-float32-array attribute %s:%04x (type=%04x).", chunk->tag, id, attr->datatype);
+    }
+    if (!attr->data) {
+        CHECK_ERR(load_attr_data(attr));
+    }
+    *dest = (float *)attr->data;
 
     return OMRX_OK;
 }

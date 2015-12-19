@@ -52,5 +52,7 @@ int main(int argc, char *argv[]) {
     // Write it out
     CHECK_OMRX_ERR(omrx_write(omrx, filename));
 
+    CHECK_OMRX_ERR(omrx_free(omrx));
+
     return 0;
 }
