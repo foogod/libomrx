@@ -1,25 +1,29 @@
 COMMON_HEADERS = include/omrx.h
-STATIC_LIBS = lib/libomrx.a
+LIBOMRX = lib/libomrx.a
 APPS = bin/test_read bin/test_write
 
 CFLAGS = -Wall -Iinclude
+LDFLAGS = -Llib
+LIBS = -lomrx
 
 all: $(APPS)
+
+.SECONDARY:
 
 %.o: %.c $(COMMON_HEADERS)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-lib/libomrx.a: libomrx/libomrx.o
-	mkdir -p lib
-	ar rcs $@ $^
+$(LIBOMRX): libomrx/libomrx.o
+	@mkdir -p lib
+	$(AR) rcs $@ $^
 
-bin/%: apps/%.o $(STATIC_LIBS)
-	mkdir -p bin
-	$(CC) $(LDFLAGS) $^ -o $@
+bin/%: apps/%.o $(LIBOMRX)
+	@mkdir -p bin
+	$(CC) $(LDFLAGS) $< $(LIBS) -o $@
 
 clean:
 	rm -f libomrx/*.o apps/*.o
 
 distclean: clean
-	rm -f $(STATIC_LIBS) $(APPS)
+	rm -f $(LIBOMRX) $(APPS)
 
