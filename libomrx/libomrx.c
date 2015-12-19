@@ -79,14 +79,14 @@ struct chunk_header {
     char tag[4];
     uint16_t count;
 };
+_Static_assert(sizeof(struct chunk_header) == CHUNKHDR_SIZE, "struct chunk_header is the wrong size");
 
 struct attr_header {
     uint16_t id;
     uint16_t datatype;
     uint32_t size;
 };
-
-// FIXME: make sure the structs match the expected size
+_Static_assert(sizeof(struct attr_header) == ATTRHDR_SIZE, "struct attr_header is the wrong size");
 
 static void omrx_default_log_error_func(omrx_t omrx, omrx_status_t errcode, const char *msg);
 static void omrx_default_log_warning_func(omrx_t omrx, omrx_status_t errcode, const char *msg);
