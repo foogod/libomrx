@@ -18,8 +18,11 @@ typedef struct omrx_chunk *omrx_chunk_t;
 
 typedef void (omrx_log_func_t)(omrx_t omrx, omrx_status_t errcode, const char *msg);
 
-#define OMRX_OK 0
-#define OMRX_NONE 1
+#define OMRX_RESULT_OK        0
+#define OMRX_RESULT_NOT_FOUND 1
+#define OMRX_RESULT_NO_OBJECT 2
+
+#define OMRX_OK OMRX_RESULT_OK
 
 #define OMRX_WARN_BAD_VER 0x100
 #define OMRX_WARN_BAD_ATTR 0x101
@@ -99,14 +102,16 @@ struct omrx_attr_info {
 bool do_omrx_init(int api_ver);
 omrx_t omrx_new(void);
 omrx_status_t omrx_free(omrx_t omrx);
+omrx_status_t omrx_status(omrx_t omrx, bool reset);
+omrx_status_t omrx_last_result(omrx_t omrx);
 omrx_status_t omrx_get_version(omrx_t omrx, uint32_t *ver);
 omrx_status_t omrx_open(omrx_t omrx, const char *filename);
 omrx_status_t omrx_close(omrx_t omrx);
 omrx_chunk_t omrx_get_root_chunk(omrx_t omrx);
-omrx_status_t omrx_get_first_chunk(omrx_chunk_t chunk, const char *tag, omrx_chunk_t *result);
-omrx_status_t omrx_get_next_chunk(omrx_chunk_t chunk, omrx_chunk_t *result);
-omrx_status_t omrx_get_chunk_by_id(omrx_chunk_t chunk, const char *tag, const char *id, omrx_chunk_t *result);
-omrx_status_t omrx_add_chunk(omrx_chunk_t parent, const char *tag, omrx_chunk_t *new_chunkptr);
+omrx_status_t omrx_get_child(omrx_chunk_t chunk, const char *tag, omrx_chunk_t *result);
+omrx_status_t omrx_get_next_chunk(omrx_chunk_t chunk, const char *tag, omrx_chunk_t *result);
+omrx_status_t omrx_get_child_by_id(omrx_chunk_t chunk, const char *tag, const char *id, omrx_chunk_t *result);
+omrx_status_t omrx_add_chunk(omrx_chunk_t chunk, const char *tag, omrx_chunk_t *result);
 omrx_status_t omrx_del_chunk(omrx_chunk_t chunk);
 omrx_status_t omrx_get_attr_info(omrx_chunk_t chunk, uint16_t id, struct omrx_attr_info *info);
 omrx_status_t omrx_set_attr_str(omrx_chunk_t chunk, uint16_t id, omrx_ownership_t own, char *str);

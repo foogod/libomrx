@@ -32,24 +32,14 @@ int main(int argc, char *argv[]) {
 
     CHECK_OMRX_ERR(omrx_open(omrx, filename));
 
+    // Find the toplevel mESH chunk with id="test" and get its first VRTx child
     chunk = omrx_get_root_chunk(omrx);
-    // Find the toplevel mESH chunk with id="test"
-    CHECK_OMRX_ERR(omrx_get_chunk_by_id(chunk, "mESH", "test", &chunk));
-    if (!chunk) {
-        fprintf(stderr, "No 'test' mesh found!\n");
-        return 1;
-    }
-
-    // Get the first VRTx chunk under mESH
-    CHECK_OMRX_ERR(omrx_get_first_chunk(chunk, "VRTx", &chunk));
-    if (!chunk) {
-        fprintf(stderr, "No VRTx chunk inside mESH!\n");
-        return 1;
-    }
-
+    CHECK_OMRX_ERR(omrx_get_child_by_id(chunk, "mESH", "test", &chunk));
+    CHECK_OMRX_ERR(omrx_get_child(chunk, "VRTx", &chunk));
+    // Get info for the 'data' attribute
     CHECK_OMRX_ERR(omrx_get_attr_info(chunk, OMRX_ATTR_DATA, &info));
-    if (!info.exists) {
-        fprintf(stderr, "VRTx has no data??\n");
+    if (omrx_last_result(omrx) != OMRX_OK) {
+        fprintf(stderr, "Could not find vertex data for 'test' mesh\n");
         return 1;
     }
 
