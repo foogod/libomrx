@@ -32,16 +32,15 @@ int main(int argc, char *argv[]) {
 
     // Start of libomrx-related code
 
-    if (!omrx_init()) {
+    if (omrx_init() != OMRX_OK) {
         fprintf(stderr, "omrx_init failed!\n");
         return 1;
     }
 
-    omrx = omrx_new();
-    if (!omrx) exit(1);
+    CHECK_OMRX_ERR(omrx_new(&omrx));
 
-    chunk = omrx_get_root_chunk(omrx);
     // Add a toplevel mESH chunk with id="test"
+    CHECK_OMRX_ERR(omrx_get_root_chunk(omrx, &chunk));
     CHECK_OMRX_ERR(omrx_add_chunk(chunk, "mESH", &chunk));
     CHECK_OMRX_ERR(omrx_set_attr_str(chunk, OMRX_ATTR_ID, OMRX_COPY, "test"));
 

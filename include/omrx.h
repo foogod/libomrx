@@ -16,26 +16,31 @@ typedef enum {
 typedef struct omrx *omrx_t;
 typedef struct omrx_chunk *omrx_chunk_t;
 
-typedef void (omrx_log_func_t)(omrx_t omrx, omrx_status_t errcode, const char *msg);
+typedef void (*omrx_log_func_t)(omrx_t omrx, omrx_status_t errcode, const char *msg);
 
-#define OMRX_RESULT_OK        0
-#define OMRX_RESULT_NOT_FOUND 1
-#define OMRX_RESULT_NO_OBJECT 2
+#define OMRX_STATUS_OK        0
+#define OMRX_STATUS_NOT_FOUND 1
+#define OMRX_STATUS_DUP       2
+#define OMRX_STATUS_NO_OBJECT 3
 
-#define OMRX_OK OMRX_RESULT_OK
+#define OMRX_OK OMRX_STATUS_OK
 
-#define OMRX_WARN_BAD_VER 0x100
-#define OMRX_WARN_BAD_ATTR 0x101
+#define OMRX_WARNING        0x1000
+#define OMRX_WARN_BAD_VER   (OMRX_WARNING + 0)
+#define OMRX_WARN_BAD_ATTR  (OMRX_WARNING + 1)
+#define OMRX_WARN_OSERR     (OMRX_WARNING + 2)
 
-#define OMRX_ERR_OSERR        -1
-#define OMRX_ERR_EOF          -2
-#define OMRX_ERR_NOT_OPEN     -3
-#define OMRX_ERR_ALREADY_OPEN -4
-#define OMRX_ERR_BAD_MAGIC    -5
-#define OMRX_ERR_BAD_VER      -6
-#define OMRX_ERR_BAD_CHUNK    -7
-#define OMRX_ERR_BAD_DTYPE    -8
-#define OMRX_ERR_NODATA       -9
+#define OMRX_ERR_BADAPI       -1
+#define OMRX_ERR_OSERR        -2
+#define OMRX_ERR_ALLOC        -3
+#define OMRX_ERR_EOF          -4
+#define OMRX_ERR_NOT_OPEN     -5
+#define OMRX_ERR_ALREADY_OPEN -6
+#define OMRX_ERR_BAD_MAGIC    -7
+#define OMRX_ERR_BAD_VER      -8
+#define OMRX_ERR_BAD_CHUNK    -9
+#define OMRX_ERR_BAD_DTYPE    -10
+#define OMRX_ERR_NODATA       -11
 
 #define OMRX_TYPEF_UNSIGNED 0x0000
 #define OMRX_TYPEF_SIGNED   0x0004
@@ -99,18 +104,23 @@ struct omrx_attr_info {
     uint32_t rows;
 };
 
-bool do_omrx_init(int api_ver);
-omrx_t omrx_new(void);
+void omrx_default_log_warning_func(omrx_t omrx, omrx_status_t errcode, const char *msg);
+void omrx_default_log_error_func(omrx_t omrx, omrx_status_t errcode, const char *msg);
+
+omrx_status_t omrx_do_init(int api_ver, omrx_log_func_t warnfunc, omrx_log_func_t errfunc);
+omrx_status_t omrx_new(omrx_t *result);
 omrx_status_t omrx_free(omrx_t omrx);
 omrx_status_t omrx_status(omrx_t omrx, bool reset);
 omrx_status_t omrx_last_result(omrx_t omrx);
 omrx_status_t omrx_get_version(omrx_t omrx, uint32_t *ver);
-omrx_status_t omrx_open(omrx_t omrx, const char *filename);
+omrx_status_t omrx_open(omrx_t omrx, const char *filename, FILE *fp);
 omrx_status_t omrx_close(omrx_t omrx);
-omrx_chunk_t omrx_get_root_chunk(omrx_t omrx);
+omrx_status_t omrx_get_root_chunk(omrx_t omrx, omrx_chunk_t *result);
 omrx_status_t omrx_get_child(omrx_chunk_t chunk, const char *tag, omrx_chunk_t *result);
 omrx_status_t omrx_get_next_chunk(omrx_chunk_t chunk, const char *tag, omrx_chunk_t *result);
+omrx_status_t omrx_get_chunk_by_id(omrx_t omrx, const char *id, const char *tag, omrx_chunk_t *result);
 omrx_status_t omrx_get_child_by_id(omrx_chunk_t chunk, const char *tag, const char *id, omrx_chunk_t *result);
+omrx_status_t omrx_get_parent(omrx_chunk_t chunk, omrx_chunk_t *result);
 omrx_status_t omrx_add_chunk(omrx_chunk_t chunk, const char *tag, omrx_chunk_t *result);
 omrx_status_t omrx_del_chunk(omrx_chunk_t chunk);
 omrx_status_t omrx_get_attr_info(omrx_chunk_t chunk, uint16_t id, struct omrx_attr_info *info);
@@ -119,12 +129,12 @@ omrx_status_t omrx_get_attr_str(omrx_chunk_t chunk, uint16_t id, char **dest);
 omrx_status_t omrx_set_attr_uint32(omrx_chunk_t chunk, uint16_t id, uint32_t value);
 omrx_status_t omrx_get_attr_uint32(omrx_chunk_t chunk, uint16_t id, uint32_t *dest);
 omrx_status_t omrx_set_attr_float32_array(omrx_chunk_t chunk, uint16_t id, omrx_ownership_t own, uint16_t cols, uint32_t rows, float *data);
-omrx_status_t omrx_get_attr_float32_array(omrx_chunk_t chunk, uint16_t id, float **dest);
+omrx_status_t omrx_get_attr_float32_array(omrx_chunk_t chunk, uint16_t id, uint16_t *cols, uint32_t *rows, float **data);
 omrx_status_t omrx_release_attr_data(omrx_chunk_t chunk, uint16_t id);
 omrx_status_t omrx_del_attr(omrx_chunk_t chunk, uint16_t id);
 omrx_status_t omrx_write(omrx_t omrx, const char *filename);
 
-#define omrx_init() do_omrx_init(OMRX_API_VER)
+#define omrx_init() omrx_do_init(OMRX_API_VER, omrx_default_log_warning_func, omrx_default_log_error_func)
 
 #ifdef  __cplusplus
 }

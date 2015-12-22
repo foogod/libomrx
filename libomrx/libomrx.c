@@ -7,6 +7,9 @@
 
 #include "omrx.h"
 
+/** @file
+ */
+
 //TODO: make sure zero-length arrays are handled properly (malloc, read/write, etc)
 
 #define LOG(...) fprintf(stderr, __VA_ARGS__); fflush(stderr);
@@ -21,14 +24,23 @@
 
 typedef struct omrx_attr *omrx_attr_t;
 
+//FIXME: make this a hashtable or something
+struct idmap_st {
+    const char *id;
+    omrx_chunk_t chunk;
+};
+
 struct omrx {
     FILE *fp;
     char *filename;
+    bool close_file;
     char *message;
-    omrx_log_func_t *log_error;
-    omrx_log_func_t *log_warning;
-    struct omrx_chunk *top_chunk;
+    omrx_log_func_t log_error;
+    omrx_log_func_t log_warning;
+    struct omrx_chunk *root_chunk;
     struct omrx_chunk *context;
+    struct idmap_st *chunk_id_map;
+    size_t chunk_id_map_size;
     omrx_status_t status;
     omrx_status_t last_result;
 };
@@ -43,7 +55,7 @@ struct omrx_chunk {
     uint32_t tagint;
     uint16_t attr_count;
     struct omrx_attr *attrs;
-    char *id;
+    const char *id;
     off_t file_position;
 };
 
@@ -71,9 +83,9 @@ struct omrx_attr {
 #define UINT16_HTOF(value) (value)
 #define UINT32_HTOF(value) (value)
 
-#define CHECK_ALLOC(omrx, x) if ((x) == NULL) { return omrx_os_error((omrx), "Memory allocation failed"); }
+#define CHECK_ALLOC(omrx, x) if ((x) == NULL) { return omrx_os_error((omrx), OMRX_ERR_ALLOC, "Memory allocation failed"); }
 #define CHECK_ERR(x) do { omrx_status_t __x = (x); if (__x < 0) return __x; } while (0);
-#define RESULT(omrx, x) (omrx->last_result = (x))
+#define API_RESULT(omrx, x) (omrx->last_result = (x))
 
 #define CHUNKHDR_SIZE 6
 #define ATTRHDR_SIZE 8
@@ -91,8 +103,6 @@ struct attr_header {
 };
 _Static_assert(sizeof(struct attr_header) == ATTRHDR_SIZE, "struct attr_header is the wrong size");
 
-static void omrx_default_log_error_func(omrx_t omrx, omrx_status_t errcode, const char *msg);
-static void omrx_default_log_warning_func(omrx_t omrx, omrx_status_t errcode, const char *msg);
 static omrx_status_t seek_to_pos(omrx_t omrx, off_t pos);
 static omrx_status_t skip_data(omrx_t omrx, off_t size);
 static omrx_status_t read_data(omrx_t omrx, off_t size, void *dest);
@@ -110,6 +120,9 @@ static omrx_status_t freeze_attr_data(omrx_attr_t attr);
 static omrx_status_t find_attr(omrx_chunk_t chunk, uint16_t id, omrx_attr_t *dest);
 static omrx_status_t chunk_add_attr(omrx_chunk_t chunk, omrx_attr_t attr);
 static omrx_status_t add_child_chunk(omrx_chunk_t parent, omrx_chunk_t child);
+static omrx_status_t register_chunk_id(omrx_chunk_t chunk, const char *idstr);
+static omrx_status_t deregister_chunk_id(omrx_chunk_t chunk);
+static omrx_status_t lookup_chunk_id(omrx_t omrx, const char *idstr, omrx_chunk_t *result);
 static omrx_status_t omrx_scan(omrx_t omrx);
 static omrx_status_t read_next_chunk(omrx_t omrx);
 static omrx_status_t read_attr_subheader_array(omrx_attr_t attr);
@@ -120,88 +133,8 @@ static uint32_t get_elem_size(uint16_t dtype, uint32_t total_size);
 
 ///////////////////////////////////////////////
 
-static void omrx_default_log_error_func(omrx_t omrx, omrx_status_t errcode, const char *msg) {
-    if (omrx->filename) {
-        fprintf(stderr, "libomrx error: %s: %s\n", omrx->filename, msg);
-    } else {
-        fprintf(stderr, "libomrx error: %s\n", msg);
-    }
-    fflush(stderr);
-}
-
-static void omrx_default_log_warning_func(omrx_t omrx, omrx_status_t errcode, const char *msg) {
-    if (omrx->filename) {
-        fprintf(stderr, "libomrx warning: %s: %s\n", omrx->filename, msg);
-    } else {
-        fprintf(stderr, "libomrx warning: %s\n", msg);
-    }
-    fflush(stderr);
-}
-
-static omrx_log_func_t *default_log_error = omrx_default_log_error_func;
-static omrx_log_func_t *default_log_warning = omrx_default_log_warning_func;
-
-omrx_status_t omrx_error(omrx_t omrx, omrx_status_t errcode, const char *fmt, ...) {
-    va_list ap;
-
-    va_start(ap, fmt);
-    if (vsnprintf(omrx->message, OMRX_ERRMSG_BUFSIZE, fmt, ap) < 0) {
-        strncpy(omrx->message, "(unable to format error message)", OMRX_ERRMSG_BUFSIZE);
-        omrx->message[OMRX_ERRMSG_BUFSIZE - 1] = 0;
-    }
-    va_end(ap);
-    if (omrx->log_error) {
-        omrx->log_error(omrx, errcode, omrx->message);
-    }
-
-    omrx->status = errcode;
-    omrx->last_result = errcode;
-    return errcode;
-}
-
-omrx_status_t omrx_os_error(omrx_t omrx, const char *fmt, ...) {
-    va_list ap;
-    size_t msglen;
-    omrx_status_t errcode;
-
-    if (errno == 0 && omrx->fp && feof(omrx->fp)) {
-        // We must have gotten here because of a short read due to hitting
-        // EOF unexpectedly.
-        errcode = OMRX_ERR_EOF;
-    } else {
-        errcode = OMRX_ERR_OSERR;
-    }
-
-    va_start(ap, fmt);
-    if (vsnprintf(omrx->message, OMRX_ERRMSG_BUFSIZE, fmt, ap) < 0) {
-        strncpy(omrx->message, "(unable to format error message)", OMRX_ERRMSG_BUFSIZE);
-        omrx->message[OMRX_ERRMSG_BUFSIZE - 1] = 0;
-    }
-    va_end(ap);
-
-    msglen = strlen(omrx->message);
-    // If there's space, tack on the strerror() message after our own message.
-    if (msglen < OMRX_ERRMSG_BUFSIZE - 3) {
-        omrx->message[msglen] = ':';
-        omrx->message[msglen + 1] = ' ';
-        if (errcode == OMRX_ERR_EOF) {
-            strncpy(omrx->message + msglen + 2, "Unexpected end of file", OMRX_ERRMSG_BUFSIZE - msglen - 2);
-            omrx->message[OMRX_ERRMSG_BUFSIZE - 1] = 0;
-        } else {
-            if (strerror_r(errno, omrx->message + msglen + 2, OMRX_ERRMSG_BUFSIZE - msglen - 2)) {
-                omrx->message[msglen + 2] = 0; // FIXME
-            }
-        }
-    }
-
-    if (omrx->log_error) {
-        omrx->log_error(omrx, errcode, omrx->message);
-    }
-
-    omrx->status = errcode;
-    omrx->last_result = errcode;
-    return errcode;
-}
+static omrx_log_func_t default_log_warning = NULL;
+static omrx_log_func_t default_log_error = NULL;
 
 omrx_status_t omrx_warning(omrx_t omrx, omrx_status_t errcode, const char *fmt, ...) {
     va_list ap;
@@ -225,12 +158,110 @@ omrx_status_t omrx_warning(omrx_t omrx, omrx_status_t errcode, const char *fmt, 
     return errcode;
 }
 
+omrx_status_t omrx_error(omrx_t omrx, omrx_status_t errcode, const char *fmt, ...) {
+    va_list ap;
+
+    va_start(ap, fmt);
+    if (vsnprintf(omrx->message, OMRX_ERRMSG_BUFSIZE, fmt, ap) < 0) {
+        strncpy(omrx->message, "(unable to format error message)", OMRX_ERRMSG_BUFSIZE);
+        omrx->message[OMRX_ERRMSG_BUFSIZE - 1] = 0;
+    }
+    va_end(ap);
+    if (omrx->log_error) {
+        omrx->log_error(omrx, errcode, omrx->message);
+    }
+
+    omrx->status = errcode;
+    omrx->last_result = errcode;
+    return errcode;
+}
+
+omrx_status_t omrx_os_warning(omrx_t omrx, omrx_status_t errcode, const char *fmt, ...) {
+    va_list ap;
+    size_t msglen;
+
+    va_start(ap, fmt);
+    if (vsnprintf(omrx->message, OMRX_ERRMSG_BUFSIZE, fmt, ap) < 0) {
+        strncpy(omrx->message, "(unable to format warning message)", OMRX_ERRMSG_BUFSIZE);
+        omrx->message[OMRX_ERRMSG_BUFSIZE - 1] = 0;
+    }
+    va_end(ap);
+
+    msglen = strlen(omrx->message);
+    // If there's space, tack on the strerror() message after our own message.
+    if (msglen < OMRX_ERRMSG_BUFSIZE - 3) {
+        omrx->message[msglen] = ':';
+        omrx->message[msglen + 1] = ' ';
+        if (strerror_r(errno, omrx->message + msglen + 2, OMRX_ERRMSG_BUFSIZE - msglen - 2)) {
+            strncpy(omrx->message + msglen + 2, "(strerror failed)", OMRX_ERRMSG_BUFSIZE - msglen - 2);
+            omrx->message[OMRX_ERRMSG_BUFSIZE - 1] = 0;
+        }
+    }
+
+    if (omrx->log_warning) {
+        omrx->log_warning(omrx, errcode, omrx->message);
+    }
+
+    // Any previous error status takes priority, but if the current status is a
+    // warning or less, replace it with the most recent warning status.
+    if (omrx->status >= 0) {
+        omrx->status = errcode;
+    }
+    omrx->last_result = errcode;
+    return errcode;
+}
+
+omrx_status_t omrx_os_error(omrx_t omrx, omrx_status_t errcode, const char *fmt, ...) {
+    va_list ap;
+    size_t msglen;
+
+    if (errno == 0 && omrx->fp && feof(omrx->fp)) {
+        // We must have gotten here because of a short read due to hitting
+        // EOF unexpectedly.
+        errcode = OMRX_ERR_EOF;
+    }
+
+    va_start(ap, fmt);
+    if (vsnprintf(omrx->message, OMRX_ERRMSG_BUFSIZE, fmt, ap) < 0) {
+        strncpy(omrx->message, "(unable to format error message)", OMRX_ERRMSG_BUFSIZE);
+        omrx->message[OMRX_ERRMSG_BUFSIZE - 1] = 0;
+    }
+    va_end(ap);
+
+    msglen = strlen(omrx->message);
+    // If there's space, tack on the strerror() message after our own message.
+    if (msglen < OMRX_ERRMSG_BUFSIZE - 3) {
+        omrx->message[msglen] = ':';
+        omrx->message[msglen + 1] = ' ';
+        if (errcode == OMRX_ERR_EOF) {
+            // Since errno=0, strerror normally returns the (rather confusing
+            // and not useful) "No error" message for this.  Use a better
+            // message in this case.
+            strncpy(omrx->message + msglen + 2, "Unexpected end of file", OMRX_ERRMSG_BUFSIZE - msglen - 2);
+            omrx->message[OMRX_ERRMSG_BUFSIZE - 1] = 0;
+        } else {
+            if (strerror_r(errno, omrx->message + msglen + 2, OMRX_ERRMSG_BUFSIZE - msglen - 2)) {
+                strncpy(omrx->message + msglen + 2, "(strerror failed)", OMRX_ERRMSG_BUFSIZE - msglen - 2);
+                omrx->message[OMRX_ERRMSG_BUFSIZE - 1] = 0;
+            }
+        }
+    }
+
+    if (omrx->log_error) {
+        omrx->log_error(omrx, errcode, omrx->message);
+    }
+
+    omrx->status = errcode;
+    omrx->last_result = errcode;
+    return errcode;
+}
+
 ///////////////////////////////////
 
 static omrx_status_t seek_to_pos(omrx_t omrx, off_t pos) {
     LOG_IO("- seek %lu\n", pos);
     if (fseeko(omrx->fp, pos, SEEK_SET) < 0) {
-        return omrx_os_error(omrx, "Seek failed");
+        return omrx_os_error(omrx, OMRX_ERR_OSERR, "Seek failed");
     }
 
     return OMRX_OK;
@@ -239,7 +270,7 @@ static omrx_status_t seek_to_pos(omrx_t omrx, off_t pos) {
 static omrx_status_t skip_data(omrx_t omrx, off_t size) {
     LOG_IO("- skip %lu\n", size);
     if (fseeko(omrx->fp, size, SEEK_CUR) < 0) {
-        return omrx_os_error(omrx, "Seek failed");
+        return omrx_os_error(omrx, OMRX_ERR_OSERR, "Seek failed");
     }
 
     return OMRX_OK;
@@ -247,7 +278,7 @@ static omrx_status_t skip_data(omrx_t omrx, off_t size) {
 
 static omrx_status_t read_data(omrx_t omrx, off_t size, void *dest) {
     if (fread(dest, size, 1, omrx->fp) != 1) {
-        return omrx_os_error(omrx, "Read error");
+        return omrx_os_error(omrx, OMRX_ERR_OSERR, "Read error");
     }
 #if LOGIO
     LOG_IO("- read: ");
@@ -274,7 +305,7 @@ static omrx_status_t write_data(omrx_t omrx, off_t size, const void *src, FILE *
 #endif
 
     if (fwrite(src, size, 1, fp) != 1) {
-        return omrx_os_error(omrx, "Write error");
+        return omrx_os_error(omrx, OMRX_ERR_OSERR, "Write error");
     }
 
     return OMRX_OK;
@@ -404,7 +435,7 @@ static omrx_status_t release_attr_data(omrx_attr_t attr) {
     }
     if (attr->file_pos < 0) {
         // This isn't a file-backed attribute.  Do nothing.
-        return OMRX_RESULT_NOT_FOUND;
+        return OMRX_STATUS_NOT_FOUND;
     }
     free(attr->data);
 
@@ -414,7 +445,7 @@ static omrx_status_t release_attr_data(omrx_attr_t attr) {
 static omrx_status_t freeze_attr_data(omrx_attr_t attr) {
     if (attr->file_pos < 0) {
         // Not a file-backed attribute (or already frozen).  Do nothing.
-        return OMRX_RESULT_NOT_FOUND;
+        return OMRX_STATUS_NOT_FOUND;
     }
     if (!attr->data) {
         // Not currently loaded.  Load it first.
@@ -439,7 +470,7 @@ static omrx_status_t find_attr(omrx_chunk_t chunk, uint16_t id, omrx_attr_t *des
     }
 
     *dest = NULL;
-    return OMRX_RESULT_NOT_FOUND;
+    return OMRX_STATUS_NOT_FOUND;
 }
 
 static omrx_status_t chunk_add_attr(omrx_chunk_t chunk, omrx_attr_t attr) {
@@ -476,7 +507,7 @@ static omrx_status_t omrx_scan(omrx_t omrx) {
 
     file_pos = ftello(omrx->fp);
     if (file_pos < 0) {
-        return omrx_os_error(omrx, "Cannot read file position");
+        return omrx_os_error(omrx, OMRX_ERR_OSERR, "Cannot read file position");
     }
     CHECK_ERR(read_data(omrx, 4, &tag));
     if (memcmp(tag, "OMRX", 4)) {
@@ -484,9 +515,9 @@ static omrx_status_t omrx_scan(omrx_t omrx) {
     }
     //FIXME: check whether we've already been read/populated before
     CHECK_ERR(seek_to_pos(omrx, file_pos));
-    if (omrx->top_chunk) {
-        free_all_chunks(omrx->top_chunk);
-        omrx->top_chunk = NULL;
+    if (omrx->root_chunk) {
+        free_all_chunks(omrx->root_chunk);
+        omrx->root_chunk = NULL;
     }
     CHECK_ERR(read_next_chunk(omrx));
     CHECK_ERR(omrx_get_version(omrx, &ver));
@@ -504,6 +535,73 @@ static omrx_status_t omrx_scan(omrx_t omrx) {
     return OMRX_OK;
 }
 
+static omrx_status_t register_chunk_id(omrx_chunk_t chunk, const char *idstr) {
+    omrx_t omrx = chunk->omrx;
+    int i;
+    int next_free = -1;
+    struct idmap_st *new_id_map;
+
+    if (chunk->id) {
+        deregister_chunk_id(chunk);
+    }
+    chunk->id = idstr;
+
+    for (i = 0; i < omrx->chunk_id_map_size; i++) {
+        if (!omrx->chunk_id_map[i].id) {
+            if (next_free == -1) {
+                next_free = i;
+            }
+        } else if (!strcmp(omrx->chunk_id_map[i].id, idstr)) {
+            // FIXME: should this be a warning?
+            return OMRX_STATUS_DUP;
+        }
+    }
+    if (next_free == -1) {
+        // Current map is full, we need to expand it to make space.
+        next_free = omrx->chunk_id_map_size;
+        omrx->chunk_id_map_size *= 2; // FIXME: should have a max increment
+        new_id_map = realloc(omrx->chunk_id_map, sizeof(struct idmap_st) * omrx->chunk_id_map_size);
+        if (!new_id_map) {
+            return omrx_os_error(omrx, OMRX_ERR_ALLOC, "Cannot expand lookup table for new chunk ID");
+        }
+        omrx->chunk_id_map = new_id_map;
+    }
+    omrx->chunk_id_map[next_free].id = idstr;
+    omrx->chunk_id_map[next_free].chunk = chunk;
+
+    return OMRX_OK;
+}
+
+static omrx_status_t deregister_chunk_id(omrx_chunk_t chunk) {
+    omrx_t omrx = chunk->omrx;
+    int i;
+
+    if (chunk->id) {
+        for (i = 0; i < omrx->chunk_id_map_size; i++) {
+            if (!strcmp(omrx->chunk_id_map[i].id, chunk->id)) {
+                omrx->chunk_id_map[i].id = NULL;
+                break;
+            }
+        }
+        chunk->id = NULL;
+    }
+
+    return OMRX_OK;
+}
+
+static omrx_status_t lookup_chunk_id(omrx_t omrx, const char *idstr, omrx_chunk_t *result) {
+    int i;
+
+    for (i = 0; i < omrx->chunk_id_map_size; i++) {
+        if (!strcmp(omrx->chunk_id_map[i].id, idstr)) {
+            *result = omrx->chunk_id_map[i].chunk;
+            return OMRX_OK;
+        }
+    }
+
+    return OMRX_STATUS_NOT_FOUND;
+}
+
 static omrx_status_t read_next_chunk(omrx_t omrx) {
     struct chunk_header hdr;
     struct attr_header attr_hdr;
@@ -517,7 +615,7 @@ static omrx_status_t read_next_chunk(omrx_t omrx) {
     CHECK_ERR(read_data(omrx, CHUNKHDR_SIZE, &hdr));
     file_pos = ftello(omrx->fp);
     if (file_pos < 0) {
-        return omrx_os_error(omrx, "Cannot read file position");
+        return omrx_os_error(omrx, OMRX_ERR_OSERR, "Cannot read file position");
     }
     tagint = TAG_TO_TAGINT(hdr.tag);
     hdr.count = UINT16_FTOH(hdr.count);
@@ -539,7 +637,7 @@ static omrx_status_t read_next_chunk(omrx_t omrx) {
         attr_hdr.size = UINT32_FTOH(attr_hdr.size);
         file_pos = ftello(omrx->fp);
         if (file_pos < 0) {
-            return omrx_os_error(omrx, "Cannot read file position");
+            return omrx_os_error(omrx, OMRX_ERR_OSERR, "Cannot read file position");
         }
         attr = new_attr(chunk, attr_hdr.id, attr_hdr.datatype, attr_hdr.size, file_pos);
         CHECK_ALLOC(omrx, attr);
@@ -553,7 +651,7 @@ static omrx_status_t read_next_chunk(omrx_t omrx) {
             if (attr_hdr.datatype == OMRX_DTYPE_UTF8) {
                 CHECK_ERR(load_attr_data(attr));
                 CHECK_ERR(freeze_attr_data(attr));
-                chunk->id = attr->data;
+                CHECK_ERR(register_chunk_id(chunk, attr->data));
             } else {
                 omrx_warning(omrx, OMRX_WARN_BAD_ATTR, "%s:id attribute has wrong type (%04x).  Ignored.", &chunk->tag, attr_hdr.datatype);
                 CHECK_ERR(skip_data(omrx, attr->size));
@@ -566,7 +664,7 @@ static omrx_status_t read_next_chunk(omrx_t omrx) {
     //TODO: check for a toplevel critical tag and take appropriate action
     if (!omrx->context) {
         // This is the first (OMRX) chunk.  Set it up as the toplevel chunk.
-        omrx->top_chunk = chunk;
+        omrx->root_chunk = chunk;
         omrx->context = chunk;
     } else {
         if (tagint == (omrx->context->tagint | END_CHUNK_FLAG)) {
@@ -687,43 +785,117 @@ static uint32_t get_elem_size(uint16_t dtype, uint32_t total_size) {
 
 /////////////// External Chunk API ///////////////////
 
-bool do_omrx_init(int api_ver) {
+/** @defgroup api The libomrx API
+  *
+  * @{
+  */
+
+/** @defgroup init Library Initialization and OMRX Instances
+  *
+  * @brief Setting up, obtaining OMRX handles, error logging, etc.
+  *
+  * @{
+  */
+
+/** @def omrx_init
+  * @brief Convenience wrapper for omrx_do_init()
+  *
+  * The first call into libomrx from any application must be either omrx_init()
+  * or omrx_do_init().  You can use omrx_do_init() if you wish to override some
+  * of the default parameters, such as the default log handling functions (see
+  * omrx_do_init() for details).  However, if you want to use the defaults, you
+  * can simply call omrx_init() instead.
+  *
+  * omrx_init() should be called once and only once, before any other libomrx
+  * functions/macros are used.
+  *
+  * @retval OMRX_OK          Library initialization successful
+  * @retval OMRX_ERR_BADAPI  Initialization failed: The passed API version does
+  * not match the version the library was compiled with.  This generally
+  * indicates the application was compiled with a different version of the
+  * headers than the library.
+  *
+  * @note Unlike other libomrx functions, if omrx_init() returns an error result, no error message is emitted.  It is up to the application to print a descriptive error if appropriate, should initialization fail.
+  */
+
+/** @brief Initialize the libomrx library
+  *
+  * omrx_do_init() must be invoked before any other libomrx functions/macros are used.
+  * Alternately, if you are happy using the default log functions provided with libomrx, you can simply use omrx_init() instead.
+  *
+  * @param[in] api_ver A constant indicating the version of the API expected by the application.  This must always be OMRX_API_VER.
+  * @param[in] warnfunc  The function to be called when a warning message needs to be issued.
+  * @param[in] errfunc  The function to be called when an error message needs to be issued.
+  *
+  * @retval OMRX_OK  Library initialization successful
+  * @retval OMRX_ERR_BADAPI  The passed API version does not match the version the library was compiled with.  This generally indicates the application was compiled with a different version of the headers than the library.
+  *
+  * @note Unlike other libomrx functions, if omrx_do_init() returns an error result, no error message is emitted.  It is up to the application to print a descriptive error if appropriate, should initialization fail.
+  */
+omrx_status_t omrx_do_init(int api_ver, omrx_log_func_t warnfunc, omrx_log_func_t errfunc) {
     if (api_ver != OMRX_API_VER) {
-        return false;
+        return OMRX_ERR_BADAPI;
     }
-    return true;
+
+    default_log_warning = warnfunc;
+    default_log_error = errfunc;
+
+    return OMRX_OK;
 }
 
-omrx_t omrx_new(void) {
+/**
+ * @brief Create a new (empty) OMRX instance and return its handle.
+ *
+ * @param[out] result  A handle to the OMRX instance created
+ *
+ * @retval OMRX_OK        Instance created successfully
+ * @retval OMRX_ERR_ALLOC Creation failed due to lack of memory
+ */
+omrx_status_t omrx_new(omrx_t *result) {
     omrx_t omrx = malloc(sizeof(struct omrx));
 
     if (!omrx) {
-        return NULL;
+        // FIXME: call default log functions
+        *result = NULL;
+        return OMRX_ERR_ALLOC;
     }
     omrx->message = malloc(OMRX_ERRMSG_BUFSIZE);
-    if (!omrx->message) {
-        // FIXME: print an error message
-        omrx_free(omrx);
-        return NULL;
-    }
     omrx->log_error = default_log_error;
     omrx->log_warning = default_log_warning;
-    omrx->top_chunk = new_chunk(omrx, "OMRX");
-    if (!omrx->top_chunk) {
-        // FIXME: print an error message
-        omrx_free(omrx);
-        return NULL;
-    }
-    if (omrx_set_attr_uint32(omrx->top_chunk, OMRX_ATTR_VER, OMRX_MIN_VERSION) < 0) {
-        omrx_free(omrx);
-        return NULL;
+    omrx->root_chunk = new_chunk(omrx, "OMRX");
+    omrx->chunk_id_map_size = 32;
+    omrx->chunk_id_map = malloc(sizeof(struct idmap_st) * omrx->chunk_id_map_size);
+    if (omrx->chunk_id_map) {
+        memset(omrx->chunk_id_map, 0, sizeof(struct idmap_st) * omrx->chunk_id_map_size);
     }
     omrx->status = OMRX_OK;
     omrx->last_result = OMRX_OK;
 
-    return omrx;
+    if (!omrx->message || !omrx->root_chunk || !omrx->chunk_id_map) {
+        // FIXME: print an error message
+        omrx_free(omrx);
+        *result = NULL;
+        return OMRX_ERR_ALLOC;
+    }
+
+    if (omrx_set_attr_uint32(omrx->root_chunk, OMRX_ATTR_VER, OMRX_MIN_VERSION) < 0) {
+        omrx_free(omrx);
+        *result = NULL;
+        return OMRX_ERR_ALLOC;
+    }
+
+    *result = omrx;
+    return OMRX_OK;
 }
 
+/** @brief Release all resources associated with an OMRX handle
+  *
+  * After calling this function, all underlying resources associated with the given OMRX instance are closed and all memory is freed (including the instance itself).  The provided handle should not be used for any future calls.
+  *
+  * @param[in] omrx The OMRX instance to release.
+  *
+  * @retval OMRX_OK Instance freed successfully
+  */
 omrx_status_t omrx_free(omrx_t omrx) {
     omrx_status_t status = OMRX_OK;
     omrx_status_t rc;
@@ -738,18 +910,60 @@ omrx_status_t omrx_free(omrx_t omrx) {
     if (omrx->filename) {
         free(omrx->filename);
     }
-    if (omrx->top_chunk) {
-        rc = free_all_chunks(omrx->top_chunk);
-        if (rc != OMRX_OK) status = rc;
-    }
     if (omrx->message) {
         free(omrx->message);
+    }
+    if (omrx->root_chunk) {
+        rc = free_all_chunks(omrx->root_chunk);
+        if (rc != OMRX_OK) status = rc;
+    }
+    if (omrx->chunk_id_map) {
+        free(omrx->chunk_id_map);
     }
     free(omrx);
 
     return status;
 }
 
+/** @brief Return the status code from the last libomrx call
+  *
+  * This function returns whatever status code was returned by the most recent
+  * call to any libomrx function.  This is a convenience function so that a
+  * function's return value can be used directly (i.e. in an `if` statement) to
+  * test for an error condition, but then can also be retrieved again later if
+  * the application wants more information about a non-error result.
+  *
+  * Note that this differs from omrx_status() in that omrx_last_result() will
+  * not return an error/warning result from anything prior to the last call (so
+  * if the last libomrx call was successful, omrx_last_result() will return
+  * successful also, even if there was an error in an earlier libomrx call).
+  *
+  * @param[in] omrx The OMRX instance to query
+  *
+  * @returns the same status code as was returned by the previous libomrx call
+  */
+omrx_status_t omrx_last_result(omrx_t omrx) {
+    return omrx->last_result;
+}
+
+/** @brief Return the current (accumulated) error/warning status
+  *
+  * libomrx maintains a record of the last error or warning status produced by
+  * any API call.  omrx_status() can be called to find out whether any calls
+  * have produced any errors or warnings up to this point (even if the most
+  * recent call was successful).  Optionally, the status can be reset before
+  * making a series of calls, so that it can be checked (for example) at the
+  * end to ensure no undetected problems were encountered.
+  *
+  * If you only want to get the returned status code from the most recent
+  * libomrx call (regardless of any previous errors), see omrx_last_result()
+  * instead.
+  *
+  * @param[in] omrx The OMRX instance to query
+  * @param[in] reset Reset the status to OMRX_OK after reading
+  *
+  * @returns the last error/warning result from any previous libomrx call, or OMRX_OK if no errors or warnings have occurred since the last reset.
+  */
 omrx_status_t omrx_status(omrx_t omrx, bool reset) {
     omrx_status_t status = omrx->status;
 
@@ -759,23 +973,52 @@ omrx_status_t omrx_status(omrx_t omrx, bool reset) {
     return status;
 }
 
-omrx_status_t omrx_last_result(omrx_t omrx) {
-    return omrx->last_result;
+void omrx_default_log_warning_func(omrx_t omrx, omrx_status_t errcode, const char *msg) {
+    if (omrx && omrx->filename) {
+        fprintf(stderr, "libomrx warning: %s: %s\n", omrx->filename, msg);
+    } else {
+        fprintf(stderr, "libomrx warning: %s\n", msg);
+    }
+    fflush(stderr);
 }
+
+void omrx_default_log_error_func(omrx_t omrx, omrx_status_t errcode, const char *msg) {
+    if (omrx && omrx->filename) {
+        fprintf(stderr, "libomrx error: %s: %s\n", omrx->filename, msg);
+    } else {
+        fprintf(stderr, "libomrx error: %s\n", msg);
+    }
+    fflush(stderr);
+}
+
+/** @} */
+
+/** @defgroup fileio File Operations
+  *
+  * @brief Opening, reading, and writing OMRX files
+  *
+  * @{
+  */
 
 omrx_status_t omrx_get_version(omrx_t omrx, uint32_t *ver) {
-    return omrx_get_attr_uint32(omrx->top_chunk, OMRX_ATTR_VER, ver);
+    return omrx_get_attr_uint32(omrx->root_chunk, OMRX_ATTR_VER, ver);
 }
 
-omrx_status_t omrx_open(omrx_t omrx, const char *filename) {
+omrx_status_t omrx_open(omrx_t omrx, const char *filename, FILE *fp) {
     if (omrx->fp) {
         return omrx_error(omrx, OMRX_ERR_ALREADY_OPEN, "omrx_open() called on already open OMRX handle");
     }
-    omrx->filename = strdup(filename);
-    omrx->fp = fopen(filename, "rb");
-    if (!omrx->fp) {
-        return omrx_os_error(omrx, "Cannot open %s for reading", filename);
+    if (fp) {
+        omrx->fp = fp;
+        omrx->close_file = false;
+    } else {
+        omrx->fp = fopen(filename, "rb");
+        omrx->close_file = true;
+        if (!omrx->fp) {
+            return omrx_os_error(omrx, OMRX_ERR_OSERR, "Cannot open '%s' for reading", filename);
+        }
     }
+    omrx->filename = strdup(filename);
 
     return omrx_scan(omrx);
 }
@@ -784,21 +1027,66 @@ omrx_status_t omrx_close(omrx_t omrx) {
     if (!omrx->fp) {
         return omrx_error(omrx, OMRX_ERR_NOT_OPEN, "omrx_close() called on non-open OMRX handle");
     }
-    if (fclose(omrx->fp)) {
-        omrx->fp = NULL;
-        return omrx_os_error(omrx, "Close failed");
+    if (omrx->close_file) {
+        if (fclose(omrx->fp)) {
+            omrx->fp = NULL;
+            return omrx_os_warning(omrx, OMRX_WARN_OSERR, "Close failed");
+        }
     }
     omrx->fp = NULL;
 
-    return RESULT(omrx, OMRX_OK);
+    return API_RESULT(omrx, OMRX_OK);
 }
 
-omrx_chunk_t omrx_get_root_chunk(omrx_t omrx) {
-    return omrx->top_chunk;
+omrx_status_t omrx_write(omrx_t omrx, const char *filename) {
+    FILE *fp = fopen(filename, "wb");
+
+    if (!fp) {
+        return omrx_os_error(omrx, OMRX_ERR_OSERR, "Cannot open '%s' for writing", filename);
+    }
+    CHECK_ERR(write_chunk(omrx->root_chunk, fp));
+
+    if (fclose(fp)) {
+        return omrx_os_warning(omrx, OMRX_WARN_OSERR, "Close failed");
+    }
+
+    return API_RESULT(omrx, OMRX_OK);
+}
+
+/** @} */
+
+/** @defgroup chunkapi Chunk-based API
+  *
+  * @brief Manipulating chunks and attributes
+  *
+  * @{
+  */
+
+omrx_status_t omrx_get_root_chunk(omrx_t omrx, omrx_chunk_t *result) {
+    *result = omrx->root_chunk;
+    return OMRX_OK;
+}
+
+omrx_status_t omrx_get_chunk_by_id(omrx_t omrx, const char *id, const char *tag, omrx_chunk_t *result) {
+    omrx_status_t rc = lookup_chunk_id(omrx, id, result);
+
+    if (rc != OMRX_OK) {
+        *result = NULL;
+        return API_RESULT(omrx, rc);
+    }
+    if (tag) {
+        // If the caller specified a particular tag, make sure it matches.
+        if ((*result)->tagint != TAG_TO_TAGINT(tag)) {
+            *result = NULL;
+            return API_RESULT(omrx, OMRX_STATUS_NOT_FOUND);
+        }
+    }
+
+    return API_RESULT(omrx, OMRX_OK);
 }
 
 omrx_status_t omrx_get_child(omrx_chunk_t chunk, const char *tag, omrx_chunk_t *result) {
-    if (!chunk) return OMRX_RESULT_NO_OBJECT;
+    if (!chunk) return OMRX_STATUS_NO_OBJECT;
 
     omrx_t omrx = chunk->omrx;
    
@@ -809,20 +1097,20 @@ omrx_status_t omrx_get_child(omrx_chunk_t chunk, const char *tag, omrx_chunk_t *
         while (chunk) {
             if (chunk->tagint == tagint) {
                 *result = chunk;
-                return RESULT(omrx, OMRX_OK);
+                return API_RESULT(omrx, OMRX_OK);
             }
             chunk = chunk->next;
         }
     } else if (chunk->first_child) {
         *result = chunk->first_child;
-        return RESULT(omrx, OMRX_OK);
+        return API_RESULT(omrx, OMRX_OK);
     }
     *result = NULL;
-    return RESULT(omrx, OMRX_RESULT_NOT_FOUND);
+    return API_RESULT(omrx, OMRX_STATUS_NOT_FOUND);
 }
 
 omrx_status_t omrx_get_next_chunk(omrx_chunk_t chunk, const char *tag, omrx_chunk_t *result) {
-    if (!chunk) return OMRX_RESULT_NO_OBJECT;
+    if (!chunk) return OMRX_STATUS_NO_OBJECT;
 
     omrx_t omrx = chunk->omrx;
 
@@ -833,20 +1121,21 @@ omrx_status_t omrx_get_next_chunk(omrx_chunk_t chunk, const char *tag, omrx_chun
             chunk = chunk->next;
             if (chunk->tagint == tagint) {
                 *result = chunk;
-                return RESULT(omrx, OMRX_OK);
+                return API_RESULT(omrx, OMRX_OK);
             }
         }
     } else if (chunk->next) {
         *result = chunk->next;
-        return RESULT(omrx, OMRX_OK);
+        return API_RESULT(omrx, OMRX_OK);
     }
 
     *result = NULL;
-    return RESULT(omrx, OMRX_RESULT_NOT_FOUND);
+    return API_RESULT(omrx, OMRX_STATUS_NOT_FOUND);
 }
 
+//FIXME: remove this?
 omrx_status_t omrx_get_child_by_id(omrx_chunk_t chunk, const char *tag, const char *id, omrx_chunk_t *result) {
-    if (!chunk) return OMRX_RESULT_NO_OBJECT;
+    if (!chunk) return OMRX_STATUS_NO_OBJECT;
 
     omrx_t omrx = chunk->omrx;
     uint32_t tagint;
@@ -862,17 +1151,30 @@ omrx_status_t omrx_get_child_by_id(omrx_chunk_t chunk, const char *tag, const ch
         if (!tagint || (tagint == chunk->tagint)) {
             if (chunk->id && !strcmp(chunk->id, id)) {
                 *result = chunk;
-                return RESULT(omrx, OMRX_OK);
+                return API_RESULT(omrx, OMRX_OK);
             }
         }
         chunk = chunk->next;
     }
     *result = NULL;
-    return RESULT(omrx, OMRX_RESULT_NOT_FOUND);
+    return API_RESULT(omrx, OMRX_STATUS_NOT_FOUND);
+}
+
+omrx_status_t omrx_get_parent(omrx_chunk_t chunk, omrx_chunk_t *result) {
+    if (!chunk) return OMRX_STATUS_NO_OBJECT;
+
+    omrx_t omrx = chunk->omrx;
+   
+    if (chunk->parent) {
+        *result = chunk->parent;
+        return API_RESULT(omrx, OMRX_OK);
+    }
+    *result = NULL;
+    return API_RESULT(omrx, OMRX_STATUS_NOT_FOUND);
 }
 
 omrx_status_t omrx_add_chunk(omrx_chunk_t chunk, const char *tag, omrx_chunk_t *result) {
-    if (!chunk) return OMRX_RESULT_NO_OBJECT;
+    if (!chunk) return OMRX_STATUS_NO_OBJECT;
 
     omrx_t omrx = chunk->omrx;
     omrx_chunk_t child = new_chunk(omrx, tag);
@@ -883,11 +1185,11 @@ omrx_status_t omrx_add_chunk(omrx_chunk_t chunk, const char *tag, omrx_chunk_t *
         *result = child;
     }
 
-    return RESULT(omrx, OMRX_OK);
+    return API_RESULT(omrx, OMRX_OK);
 }
 
 omrx_status_t omrx_del_chunk(omrx_chunk_t chunk) {
-    if (!chunk) return OMRX_RESULT_NO_OBJECT;
+    if (!chunk) return OMRX_STATUS_NO_OBJECT;
 
     omrx_t omrx = chunk->omrx;
     omrx_chunk_t sibling;
@@ -904,11 +1206,11 @@ omrx_status_t omrx_del_chunk(omrx_chunk_t chunk) {
     }
     CHECK_ERR(free_chunk(chunk));
 
-    return RESULT(omrx, OMRX_OK);
+    return API_RESULT(omrx, OMRX_OK);
 }
 
 omrx_status_t omrx_set_attr_str(omrx_chunk_t chunk, uint16_t id, omrx_ownership_t own, char *str) {
-    if (!chunk) return OMRX_RESULT_NO_OBJECT;
+    if (!chunk) return OMRX_STATUS_NO_OBJECT;
 
     omrx_t omrx = chunk->omrx;
     omrx_attr_t attr = NULL;
@@ -934,13 +1236,13 @@ omrx_status_t omrx_set_attr_str(omrx_chunk_t chunk, uint16_t id, omrx_ownership_
     }
     attr->size = strlen(attr->data);
 
-    return RESULT(omrx, OMRX_OK);
+    return API_RESULT(omrx, OMRX_OK);
 }
 
 omrx_status_t omrx_get_attr_info(omrx_chunk_t chunk, uint16_t id, struct omrx_attr_info *info) {
     if (!chunk) {
         info->exists = false;
-        return OMRX_RESULT_NO_OBJECT;
+        return OMRX_STATUS_NO_OBJECT;
     }
 
     omrx_t omrx = chunk->omrx;
@@ -949,7 +1251,7 @@ omrx_status_t omrx_get_attr_info(omrx_chunk_t chunk, uint16_t id, struct omrx_at
     CHECK_ERR(find_attr(chunk, id, &attr));
     if (!attr) {
         info->exists = false;
-        return RESULT(omrx, OMRX_RESULT_NOT_FOUND);
+        return API_RESULT(omrx, OMRX_STATUS_NOT_FOUND);
     }
     info->exists = true;
     info->encoded_type = attr->datatype;
@@ -978,11 +1280,11 @@ omrx_status_t omrx_get_attr_info(omrx_chunk_t chunk, uint16_t id, struct omrx_at
         }
     }
 
-    return RESULT(omrx, OMRX_OK);
+    return API_RESULT(omrx, OMRX_OK);
 }
 
 omrx_status_t omrx_get_attr_str(omrx_chunk_t chunk, uint16_t id, char **dest) {
-    if (!chunk) return OMRX_RESULT_NO_OBJECT;
+    if (!chunk) return OMRX_STATUS_NO_OBJECT;
 
     omrx_t omrx = chunk->omrx;
     omrx_attr_t attr = NULL;
@@ -990,7 +1292,7 @@ omrx_status_t omrx_get_attr_str(omrx_chunk_t chunk, uint16_t id, char **dest) {
     CHECK_ERR(find_attr(chunk, id, &attr));
     if (!attr) {
         *dest = NULL;
-        return RESULT(omrx, OMRX_RESULT_NOT_FOUND);
+        return API_RESULT(omrx, OMRX_STATUS_NOT_FOUND);
     }
     if (attr->datatype != OMRX_DTYPE_UTF8) {
         return omrx_error(omrx, OMRX_ERR_BAD_DTYPE, "Attempt to get string value of non-string attribute %s:%04x (type=%04x).", chunk->tag, id, attr->datatype);
@@ -1000,11 +1302,11 @@ omrx_status_t omrx_get_attr_str(omrx_chunk_t chunk, uint16_t id, char **dest) {
     }
     *dest = attr->data;
 
-    return RESULT(omrx, OMRX_OK);
+    return API_RESULT(omrx, OMRX_OK);
 }
 
 omrx_status_t omrx_set_attr_uint32(omrx_chunk_t chunk, uint16_t id, uint32_t value) {
-    if (!chunk) return OMRX_RESULT_NO_OBJECT;
+    if (!chunk) return OMRX_STATUS_NO_OBJECT;
 
     omrx_t omrx = chunk->omrx;
     omrx_attr_t attr = NULL;
@@ -1024,11 +1326,11 @@ omrx_status_t omrx_set_attr_uint32(omrx_chunk_t chunk, uint16_t id, uint32_t val
     }
     *((uint32_t *)attr->data) = value;
 
-    return RESULT(omrx, OMRX_OK);
+    return API_RESULT(omrx, OMRX_OK);
 }
 
 omrx_status_t omrx_get_attr_uint32(omrx_chunk_t chunk, uint16_t id, uint32_t *dest) {
-    if (!chunk) return OMRX_RESULT_NO_OBJECT;
+    if (!chunk) return OMRX_STATUS_NO_OBJECT;
 
     omrx_t omrx = chunk->omrx;
     omrx_attr_t attr = NULL;
@@ -1036,7 +1338,7 @@ omrx_status_t omrx_get_attr_uint32(omrx_chunk_t chunk, uint16_t id, uint32_t *de
     CHECK_ERR(find_attr(chunk, id, &attr));
     if (!attr) {
         *dest = 0;
-        return RESULT(omrx, OMRX_RESULT_NOT_FOUND);
+        return API_RESULT(omrx, OMRX_STATUS_NOT_FOUND);
     }
     if (attr->datatype != OMRX_DTYPE_U32) {
         return omrx_error(omrx, OMRX_ERR_BAD_DTYPE, "Attempt to get uint32 value of non-uint32 attribute %s:%04x (type=%04x).", chunk->tag, id, attr->datatype);
@@ -1046,11 +1348,11 @@ omrx_status_t omrx_get_attr_uint32(omrx_chunk_t chunk, uint16_t id, uint32_t *de
     }
     *dest = *((uint32_t *)attr->data);
 
-    return RESULT(omrx, OMRX_OK);
+    return API_RESULT(omrx, OMRX_OK);
 }
 
 omrx_status_t omrx_set_attr_float32_array(omrx_chunk_t chunk, uint16_t id, omrx_ownership_t own, uint16_t cols, uint32_t rows, float *data) {
-    if (!chunk) return OMRX_RESULT_NO_OBJECT;
+    if (!chunk) return OMRX_STATUS_NO_OBJECT;
 
     omrx_t omrx = chunk->omrx;
     omrx_attr_t attr = NULL;
@@ -1077,19 +1379,19 @@ omrx_status_t omrx_set_attr_float32_array(omrx_chunk_t chunk, uint16_t id, omrx_
         attr->data = data;
     }
 
-    return RESULT(omrx, OMRX_OK);
+    return API_RESULT(omrx, OMRX_OK);
 }
 
-omrx_status_t omrx_get_attr_float32_array(omrx_chunk_t chunk, uint16_t id, float **dest) {
-    if (!chunk) return OMRX_RESULT_NO_OBJECT;
+omrx_status_t omrx_get_attr_float32_array(omrx_chunk_t chunk, uint16_t id, uint16_t *cols, uint32_t *rows, float **data) {
+    if (!chunk) return OMRX_STATUS_NO_OBJECT;
 
     omrx_t omrx = chunk->omrx;
     omrx_attr_t attr = NULL;
 
     CHECK_ERR(find_attr(chunk, id, &attr));
     if (!attr) {
-        *dest = 0;
-        return RESULT(omrx, OMRX_RESULT_NOT_FOUND);
+        *data = 0;
+        return API_RESULT(omrx, OMRX_STATUS_NOT_FOUND);
     }
     if (attr->datatype != OMRX_DTYPE_F32_ARRAY) {
         return omrx_error(omrx, OMRX_ERR_BAD_DTYPE, "Attempt to get float32-array value of non-float32-array attribute %s:%04x (type=%04x).", chunk->tag, id, attr->datatype);
@@ -1097,21 +1399,27 @@ omrx_status_t omrx_get_attr_float32_array(omrx_chunk_t chunk, uint16_t id, float
     if (!attr->data) {
         CHECK_ERR(load_attr_data(attr));
     }
-    *dest = (float *)attr->data;
+    *data = (float *)attr->data;
+    if (cols) {
+        *cols = attr->cols;
+    }
+    if (rows) {
+        *rows = (attr->size / attr->cols) / 4;
+    }
 
-    return RESULT(omrx, OMRX_OK);
+    return API_RESULT(omrx, OMRX_OK);
 }
 
 omrx_status_t omrx_release_attr_data(omrx_chunk_t chunk, uint16_t id) {
-    if (!chunk) return OMRX_RESULT_NO_OBJECT;
+    if (!chunk) return OMRX_STATUS_NO_OBJECT;
 
     omrx_t omrx = chunk->omrx;
     //FIXME: implement this
-    return RESULT(omrx, OMRX_OK);
+    return API_RESULT(omrx, OMRX_OK);
 }
 
 omrx_status_t omrx_del_attr(omrx_chunk_t chunk, uint16_t id) {
-    if (!chunk) return OMRX_RESULT_NO_OBJECT;
+    if (!chunk) return OMRX_STATUS_NO_OBJECT;
 
     omrx_t omrx = chunk->omrx;
     omrx_attr_t prev = (omrx_attr_t)(&chunk->attrs);
@@ -1122,26 +1430,15 @@ omrx_status_t omrx_del_attr(omrx_chunk_t chunk, uint16_t id) {
             attr = prev->next;
             prev->next = attr->next;
             CHECK_ERR(free_attr(attr));
-            return RESULT(omrx, OMRX_OK);
+            return API_RESULT(omrx, OMRX_OK);
         }
         prev = prev->next;
     }
 
-    return RESULT(omrx, OMRX_RESULT_NOT_FOUND);
+    return API_RESULT(omrx, OMRX_STATUS_NOT_FOUND);
 }
 
-omrx_status_t omrx_write(omrx_t omrx, const char *filename) {
-    FILE *fp = fopen(filename, "wb");
+/** @} */
 
-    if (!fp) {
-        return omrx_os_error(omrx, "Cannot open %s for writing", filename);
-    }
-    CHECK_ERR(write_chunk(omrx->top_chunk, fp));
-
-    if (fclose(fp)) {
-        return omrx_os_error(omrx, "Close failed");
-    }
-
-    return RESULT(omrx, OMRX_OK);
-}
+/** @} */
 
