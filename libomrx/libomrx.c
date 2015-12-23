@@ -7,8 +7,8 @@
 
 #include "omrx.h"
 
-/** @file
- */
+/** @cond internal
+  */
 
 //TODO: make sure zero-length arrays are handled properly (malloc, read/write, etc)
 
@@ -37,6 +37,8 @@ struct omrx {
     char *message;
     omrx_log_func_t log_error;
     omrx_log_func_t log_warning;
+    omrx_alloc_func_t alloc;
+    omrx_free_func_t free;
     struct omrx_chunk *root_chunk;
     struct omrx_chunk *context;
     struct idmap_st *chunk_id_map;
@@ -103,6 +105,10 @@ struct attr_header {
 };
 _Static_assert(sizeof(struct attr_header) == ATTRHDR_SIZE, "struct attr_header is the wrong size");
 
+static void *omrx_default_alloc(omrx_t omrx, size_t size);
+static void omrx_default_free(omrx_t omrx, void *ptr);
+static char *omrx_strdup(omrx_t omrx, const char *s);
+
 static omrx_status_t seek_to_pos(omrx_t omrx, off_t pos);
 static omrx_status_t skip_data(omrx_t omrx, off_t size);
 static omrx_status_t read_data(omrx_t omrx, off_t size, void *dest);
@@ -135,6 +141,8 @@ static uint32_t get_elem_size(uint16_t dtype, uint32_t total_size);
 
 static omrx_log_func_t default_log_warning = NULL;
 static omrx_log_func_t default_log_error = NULL;
+static omrx_alloc_func_t default_alloc = omrx_default_alloc;
+static omrx_free_func_t default_free = omrx_default_free;
 
 omrx_status_t omrx_warning(omrx_t omrx, omrx_status_t errcode, const char *fmt, ...) {
     va_list ap;
@@ -258,6 +266,23 @@ omrx_status_t omrx_os_error(omrx_t omrx, omrx_status_t errcode, const char *fmt,
 
 ///////////////////////////////////
 
+static void *omrx_default_alloc(omrx_t omrx, size_t size) {
+    return malloc(size);
+}
+
+static void omrx_default_free(omrx_t omrx, void *ptr) {
+    free(ptr);
+}
+
+static char *omrx_strdup(omrx_t omrx, const char *s) {
+    size_t size = strlen(s);
+    char *dup = omrx->alloc(omrx, size);
+
+    if (!dup) return dup;
+
+    return strcpy(dup, s);
+}
+
 static omrx_status_t seek_to_pos(omrx_t omrx, off_t pos) {
     LOG_IO("- seek %lu\n", pos);
     if (fseeko(omrx->fp, pos, SEEK_SET) < 0) {
@@ -316,7 +341,7 @@ static omrx_status_t write_data(omrx_t omrx, off_t size, const void *src, FILE *
 static omrx_chunk_t new_chunk(omrx_t omrx, const char *tag) {
     omrx_chunk_t chunk;
 
-    chunk = malloc(sizeof(struct omrx_chunk));
+    chunk = omrx->alloc(omrx, sizeof(struct omrx_chunk));
     if (!chunk) return NULL;
 
     chunk->omrx = omrx;
@@ -337,6 +362,7 @@ static omrx_chunk_t new_chunk(omrx_t omrx, const char *tag) {
 }
 
 static omrx_status_t free_chunk(omrx_chunk_t chunk) {
+    omrx_t omrx = chunk->omrx;
     omrx_attr_t attr = chunk->attrs;
     omrx_attr_t next_attr;
     omrx_status_t status = OMRX_OK;
@@ -348,7 +374,7 @@ static omrx_status_t free_chunk(omrx_chunk_t chunk) {
         if (rc != OMRX_OK) status = rc;
         attr = next_attr;
     }
-    free(chunk);
+    omrx->free(omrx, chunk);
 
     return status;
 }
@@ -374,9 +400,10 @@ static omrx_status_t free_all_chunks(omrx_chunk_t chunk) {
 }
 
 static omrx_attr_t new_attr(omrx_chunk_t chunk, uint16_t id, uint16_t datatype, uint32_t size, off_t file_pos) {
+    omrx_t omrx = chunk->omrx;
     omrx_attr_t attr;
 
-    attr = malloc(sizeof(struct omrx_attr));
+    attr = omrx->alloc(omrx, sizeof(struct omrx_attr));
     if (!attr) return NULL;
 
     attr->chunk = chunk;
@@ -392,11 +419,13 @@ static omrx_attr_t new_attr(omrx_chunk_t chunk, uint16_t id, uint16_t datatype, 
 }
 
 static omrx_status_t free_attr(omrx_attr_t attr) {
+    omrx_t omrx = attr->chunk->omrx;
+
     if (attr->data) {
         // FIXME: need to check if anybody's using it still
-        free(attr->data);
+        omrx->free(omrx, attr->data);
     }
-    free(attr);
+    omrx->free(omrx, attr);
 
     return OMRX_OK;
 }
@@ -409,19 +438,20 @@ static omrx_status_t load_attr_data(omrx_attr_t attr) {
         return OMRX_OK;
     }
     if (attr->file_pos < 0) {
-        // Somebody called load_attr_data on a non-file-backed attribute.
-        // This is probably because somebody created a new (not read from a
+        // We called load_attr_data on a non-file-backed attribute.
+        // This is probably because we created a new (not read from a
         // file) attribute and forgot to assign data to it.
-        return omrx_error(omrx, OMRX_ERR_NODATA, "%s:%04x: Attribute has no data!", attr->chunk->tag, attr->id);
+        return omrx_error(omrx, OMRX_ERR_INTERNAL, "%s:%04x: Attribute has no data!", attr->chunk->tag, attr->id);
     }
     CHECK_ERR(seek_to_pos(omrx, attr->file_pos));
-    //FIXME: deal with array datatypes, non-raw encodings
+    //FIXME: deal with non-raw encodings
     if (attr->datatype == OMRX_DTYPE_UTF8) {
-        attr->data = malloc(attr->size + 1);
+        // For strings, make sure there's a zero-byte at the end.
+        attr->data = omrx->alloc(omrx, attr->size + 1);
         CHECK_ERR(read_data(omrx, attr->size, attr->data));
         ((char *)attr->data)[attr->size] = 0;
     } else {
-        attr->data = malloc(attr->size);
+        attr->data = omrx->alloc(omrx, attr->size);
         CHECK_ALLOC(omrx, attr->data);
         CHECK_ERR(read_data(omrx, attr->size, attr->data));
     }
@@ -430,6 +460,8 @@ static omrx_status_t load_attr_data(omrx_attr_t attr) {
 }
 
 static omrx_status_t release_attr_data(omrx_attr_t attr) {
+    omrx_t omrx = attr->chunk->omrx;
+
     if (!attr->data) {
         return OMRX_OK;
     }
@@ -437,7 +469,7 @@ static omrx_status_t release_attr_data(omrx_attr_t attr) {
         // This isn't a file-backed attribute.  Do nothing.
         return OMRX_STATUS_NOT_FOUND;
     }
-    free(attr->data);
+    omrx->free(omrx, attr->data);
 
     return OMRX_OK;
 }
@@ -670,6 +702,7 @@ static omrx_status_t read_next_chunk(omrx_t omrx) {
         if (tagint == (omrx->context->tagint | END_CHUNK_FLAG)) {
             // End tag for our current context.  Pop a nesting level.
             omrx->context = omrx->context->parent;
+            CHECK_ERR(free_chunk(chunk));
         } else {
             CHECK_ERR(add_child_chunk(omrx->context, chunk));
         }
@@ -783,6 +816,8 @@ static uint32_t get_elem_size(uint16_t dtype, uint32_t total_size) {
     return 0;
 }
 
+/** @endcond */
+
 /////////////// External Chunk API ///////////////////
 
 /** @defgroup api The libomrx API
@@ -798,73 +833,117 @@ static uint32_t get_elem_size(uint16_t dtype, uint32_t total_size) {
   */
 
 /** @def omrx_init
-  * @brief Convenience wrapper for omrx_do_init()
+  * @brief Convenience wrapper for omrx_initialize()
   *
   * The first call into libomrx from any application must be either omrx_init()
-  * or omrx_do_init().  You can use omrx_do_init() if you wish to override some
+  * or omrx_initialize().  You can use omrx_initialize() if you wish to override some
   * of the default parameters, such as the default log handling functions (see
-  * omrx_do_init() for details).  However, if you want to use the defaults, you
+  * omrx_initialize() for details).  However, if you want to use the defaults, you
   * can simply call omrx_init() instead.
   *
   * omrx_init() should be called once and only once, before any other libomrx
   * functions/macros are used.
   *
-  * @retval OMRX_OK          Library initialization successful
-  * @retval OMRX_ERR_BADAPI  Initialization failed: The passed API version does
-  * not match the version the library was compiled with.  This generally
-  * indicates the application was compiled with a different version of the
-  * headers than the library.
+  * @retval ::OMRX_OK         Library initialization successful
+  * @retval ::OMRX_ERR_BADAPI Initialization failed: The passed API version does
+  *                           not match the version the library was compiled
+  *                           with.  (This generally indicates the application
+  *                           was compiled with a different version of the
+  *                           headers than the library)
   *
-  * @note Unlike other libomrx functions, if omrx_init() returns an error result, no error message is emitted.  It is up to the application to print a descriptive error if appropriate, should initialization fail.
+  * @note Unlike other libomrx functions, if omrx_init() returns an error
+  * result, no error message is logged.  It is up to the application to print
+  * a descriptive error if appropriate, should initialization fail.
   */
 
 /** @brief Initialize the libomrx library
   *
-  * omrx_do_init() must be invoked before any other libomrx functions/macros are used.
-  * Alternately, if you are happy using the default log functions provided with libomrx, you can simply use omrx_init() instead.
+  * omrx_initialize() must be invoked before any other libomrx functions/macros
+  * are used.  It performs initial setup of the library and allows specifying
+  * functions to use for logging errors/warnings and allocating and freeing
+  * memory.
   *
-  * @param[in] api_ver A constant indicating the version of the API expected by the application.  This must always be OMRX_API_VER.
-  * @param[in] warnfunc  The function to be called when a warning message needs to be issued.
-  * @param[in] errfunc  The function to be called when an error message needs to be issued.
+  * Alternately, if you want to use default values for these parameters, the
+  * omrx_init() macro provides a simpler interface which can be used instead of
+  * calling omrx_initialize() directly.
   *
-  * @retval OMRX_OK  Library initialization successful
-  * @retval OMRX_ERR_BADAPI  The passed API version does not match the version the library was compiled with.  This generally indicates the application was compiled with a different version of the headers than the library.
+  * @param[in] api_ver    A constant indicating the version of the API expected
+  *                       by the application.  This must always be
+  *                       ::OMRX_API_VER.
+  * @param[in] warn_func  The function to be called when a warning message
+  *                       needs to be issued.  Can be `NULL`, in which case no
+  *                       logging of warnings will be attempted.
+  * @param[in] err_func   The function to be called when an error message needs
+  *                       to be issued.  Can be `NULL`, in which case no
+  *                       logging of errors will be attempted.
+  * @param[in] alloc_func Function to use when allocating memory.  Can be
+  *                       `NULL`, in which case a default implementation will
+  *                       be used which uses the standard C `malloc()`.
+  * @param[in] free_func  Function to use when freeing memory.  Can be `NULL`,
+  *                       in which case a default implementation will be used
+  *                       which uses the standard C `free()`.
   *
-  * @note Unlike other libomrx functions, if omrx_do_init() returns an error result, no error message is emitted.  It is up to the application to print a descriptive error if appropriate, should initialization fail.
+  * @retval ::OMRX_OK         Library initialization successful
+  * @retval ::OMRX_ERR_BADAPI Initialization failed: The passed API version does
+  *                           not match the version the library was compiled
+  *                           with.  (This generally indicates the application
+  *                           was compiled with a different version of the
+  *                           headers than the library)
+  *
+  * @note Unlike other libomrx functions, if omrx_initialize() returns an error
+  * result, no error message is logged.  It is up to the application to print
+  * a descriptive error if appropriate, should initialization fail.
   */
-omrx_status_t omrx_do_init(int api_ver, omrx_log_func_t warnfunc, omrx_log_func_t errfunc) {
+omrx_status_t omrx_initialize(int api_ver, omrx_log_func_t warn_func, omrx_log_func_t err_func, omrx_alloc_func_t alloc_func, omrx_free_func_t free_func) {
     if (api_ver != OMRX_API_VER) {
         return OMRX_ERR_BADAPI;
     }
 
-    default_log_warning = warnfunc;
-    default_log_error = errfunc;
+    if (!alloc_func) {
+        alloc_func = omrx_default_alloc;
+    }
+    if (!free_func) {
+        free_func = omrx_default_free;
+    }
+    default_log_warning = warn_func;
+    default_log_error = err_func;
+    default_alloc = alloc_func;
+    default_free = free_func;
 
     return OMRX_OK;
 }
 
-/**
- * @brief Create a new (empty) OMRX instance and return its handle.
- *
- * @param[out] result  A handle to the OMRX instance created
- *
- * @retval OMRX_OK        Instance created successfully
- * @retval OMRX_ERR_ALLOC Creation failed due to lack of memory
- */
+/** @brief Create a new (empty) OMRX instance and return its handle.
+  *
+  * @param[out] result  A handle to the OMRX instance created
+  *
+  * @retval ::OMRX_OK        Instance created successfully
+  * @retval ::OMRX_ERR_ALLOC Creation failed due to lack of memory
+  */
 omrx_status_t omrx_new(omrx_t *result) {
-    omrx_t omrx = malloc(sizeof(struct omrx));
+    omrx_t omrx;
+
+    if (!default_alloc) {
+        // FIXME: call default log functions
+        *result = NULL;
+        return OMRX_ERR_INIT_FIRST;
+    }
+
+    omrx = default_alloc(NULL, sizeof(struct omrx));
 
     if (!omrx) {
         // FIXME: call default log functions
         *result = NULL;
         return OMRX_ERR_ALLOC;
     }
-    omrx->message = malloc(OMRX_ERRMSG_BUFSIZE);
+    omrx->alloc = default_alloc;
+    omrx->free = default_free;
+    omrx->message = omrx->alloc(omrx, OMRX_ERRMSG_BUFSIZE);
     omrx->log_error = default_log_error;
     omrx->log_warning = default_log_warning;
     omrx->root_chunk = new_chunk(omrx, "OMRX");
     omrx->chunk_id_map_size = 32;
-    omrx->chunk_id_map = malloc(sizeof(struct idmap_st) * omrx->chunk_id_map_size);
+    omrx->chunk_id_map = omrx->alloc(omrx, sizeof(struct idmap_st) * omrx->chunk_id_map_size);
     if (omrx->chunk_id_map) {
         memset(omrx->chunk_id_map, 0, sizeof(struct idmap_st) * omrx->chunk_id_map_size);
     }
@@ -890,11 +969,14 @@ omrx_status_t omrx_new(omrx_t *result) {
 
 /** @brief Release all resources associated with an OMRX handle
   *
-  * After calling this function, all underlying resources associated with the given OMRX instance are closed and all memory is freed (including the instance itself).  The provided handle should not be used for any future calls.
+  * After calling this function, all underlying resources associated with the
+  * given OMRX instance are closed and all memory is freed (including the
+  * instance itself).  The provided handle should not be used for any future
+  * calls.
   *
   * @param[in] omrx The OMRX instance to release.
   *
-  * @retval OMRX_OK Instance freed successfully
+  * @retval ::OMRX_OK  Instance freed successfully
   */
 omrx_status_t omrx_free(omrx_t omrx) {
     omrx_status_t status = OMRX_OK;
@@ -908,19 +990,19 @@ omrx_status_t omrx_free(omrx_t omrx) {
         if (rc != OMRX_OK) status = rc;
     }
     if (omrx->filename) {
-        free(omrx->filename);
+        omrx->free(omrx, omrx->filename);
     }
     if (omrx->message) {
-        free(omrx->message);
+        omrx->free(omrx, omrx->message);
     }
     if (omrx->root_chunk) {
         rc = free_all_chunks(omrx->root_chunk);
         if (rc != OMRX_OK) status = rc;
     }
     if (omrx->chunk_id_map) {
-        free(omrx->chunk_id_map);
+        omrx->free(omrx, omrx->chunk_id_map);
     }
-    free(omrx);
+    omrx->free(omrx, omrx);
 
     return status;
 }
@@ -928,19 +1010,29 @@ omrx_status_t omrx_free(omrx_t omrx) {
 /** @brief Return the status code from the last libomrx call
   *
   * This function returns whatever status code was returned by the most recent
-  * call to any libomrx function.  This is a convenience function so that a
-  * function's return value can be used directly (i.e. in an `if` statement) to
-  * test for an error condition, but then can also be retrieved again later if
-  * the application wants more information about a non-error result.
+  * call to any libomrx function (except omrx_status()).  This is a convenience
+  * so that a function's return value can be tested directly (i.e. in an `if`
+  * statement) for error conditions, but then can also be retrieved again later
+  * if the application wants more information about a non-error result.  For
+  * example:
   *
-  * Note that this differs from omrx_status() in that omrx_last_result() will
-  * not return an error/warning result from anything prior to the last call (so
-  * if the last libomrx call was successful, omrx_last_result() will return
-  * successful also, even if there was an error in an earlier libomrx call).
+  * @code
+  *     #define CHECK_ERR(x) if ((x) < 0) exit(1);
+  *
+  *     CHECK_ERR(omrx_get_chunk_by_id(omrx, "test", NULL, &chunk));
+  *
+  *     if (omrx_last_result(omrx) == OMRX_STATUS_NOT_FOUND) {
+  *         printf("Didn't find 'test' id\n");
+  *     }
+  * @endcode
+  *
+  * Note that this differs from omrx_status() in that omrx_last_result() only
+  * returns the result of the last call, and will not report any errors or
+  * warnings which might have happened previously.
   *
   * @param[in] omrx The OMRX instance to query
   *
-  * @returns the same status code as was returned by the previous libomrx call
+  * @returns The same status code as was returned by the previous libomrx call
   */
 omrx_status_t omrx_last_result(omrx_t omrx) {
     return omrx->last_result;
@@ -962,7 +1054,7 @@ omrx_status_t omrx_last_result(omrx_t omrx) {
   * @param[in] omrx The OMRX instance to query
   * @param[in] reset Reset the status to OMRX_OK after reading
   *
-  * @returns the last error/warning result from any previous libomrx call, or OMRX_OK if no errors or warnings have occurred since the last reset.
+  * @returns The last error/warning result from any previous libomrx call, or OMRX_OK if no errors or warnings have occurred since the last reset.
   */
 omrx_status_t omrx_status(omrx_t omrx, bool reset) {
     omrx_status_t status = omrx->status;
@@ -973,7 +1065,13 @@ omrx_status_t omrx_status(omrx_t omrx, bool reset) {
     return status;
 }
 
-void omrx_default_log_warning_func(omrx_t omrx, omrx_status_t errcode, const char *msg) {
+/** @brief Default logging function for warning messages
+  *
+  * This is the warning log function passed to omrx_initialize() if the
+  * omrx_init() convenience wrapper is used.  It will send all warning messages
+  * to stderr, prefixed with "libomrx warning: ".
+  */
+void omrx_default_log_warning(omrx_t omrx, omrx_status_t errcode, const char *msg) {
     if (omrx && omrx->filename) {
         fprintf(stderr, "libomrx warning: %s: %s\n", omrx->filename, msg);
     } else {
@@ -982,7 +1080,13 @@ void omrx_default_log_warning_func(omrx_t omrx, omrx_status_t errcode, const cha
     fflush(stderr);
 }
 
-void omrx_default_log_error_func(omrx_t omrx, omrx_status_t errcode, const char *msg) {
+/** @brief Default logging function for error messages
+  *
+  * This is the error log function passed to omrx_initialize() if the
+  * omrx_init() convenience wrapper is used.  It will send all error messages
+  * to stderr, prefixed with "libomrx error: ".
+  */
+void omrx_default_log_error(omrx_t omrx, omrx_status_t errcode, const char *msg) {
     if (omrx && omrx->filename) {
         fprintf(stderr, "libomrx error: %s: %s\n", omrx->filename, msg);
     } else {
@@ -1000,10 +1104,35 @@ void omrx_default_log_error_func(omrx_t omrx, omrx_status_t errcode, const char 
   * @{
   */
 
-omrx_status_t omrx_get_version(omrx_t omrx, uint32_t *ver) {
-    return omrx_get_attr_uint32(omrx->root_chunk, OMRX_ATTR_VER, ver);
-}
-
+/** @brief Open an existing OMRX file for reading
+  *
+  * This function will open an existing file (or use a supplied `FILE` handle)
+  * for reading, and perform an intial scan of its contents.  The file must be
+  * seekable.
+  *
+  * The `omrx` handle supplied should be a fresh handle created with
+  * omrx_new().  If it has been previously used, any previous contents will be
+  * overwritten.  The file will be scanned for consistency and structure, and
+  * an index will be created in memory, but the actual file data is not read
+  * until it is actually needed.  It is therefore important not to call
+  * omrx_close() until you are sure you have retrieved all the data you need.
+  *
+  * If the `fp` parameter is `NULL`, then the file specified by `filename` is
+  * opened and read.  If `fp` is not `NULL`, then it should be an open `FILE`
+  * pointer (opened for reading in binary mode) which will be used instead.  In
+  * this case `filename` can still be provided, and will be used in
+  * informational messages, etc, as the name of the open file.
+  *
+  * @param[in] omrx     The OMRX instance to use
+  * @param[in] filename The name of the file to open
+  * @param[in] fp       An open `FILE` pointer to use for file IO, or `NULL`
+  *
+  * @retval ::OMRX_OK             File opened successfully
+  * @retval ::OMRX_ERR_EOF        Unexpected end-of-file encountered
+  * @retval ::OMRX_ERR_BAD_MAGIC  Bad data at beginning of file
+  * @retval ::OMRX_ERR_BAD_CHUNK  Invalid chunk tag encountered
+  * @retval ::OMRX_ERR_BAD_VER    File version is incompatible with library version
+  */
 omrx_status_t omrx_open(omrx_t omrx, const char *filename, FILE *fp) {
     if (omrx->fp) {
         return omrx_error(omrx, OMRX_ERR_ALREADY_OPEN, "omrx_open() called on already open OMRX handle");
@@ -1018,11 +1147,39 @@ omrx_status_t omrx_open(omrx_t omrx, const char *filename, FILE *fp) {
             return omrx_os_error(omrx, OMRX_ERR_OSERR, "Cannot open '%s' for reading", filename);
         }
     }
-    omrx->filename = strdup(filename);
+    omrx->filename = omrx_strdup(omrx, filename);
 
     return omrx_scan(omrx);
 }
 
+/** @brief Get the version of the OMRX file currently open for reading
+  *
+  * Returns a binary constant indicating the version of the OMRX standard that
+  * the open file was written to.  The upper 16 bits contain the major version,
+  * and the lower 16 bits contain the minor version.
+  *
+  * @param[in] omrx     The OMRX instance to query
+  * @param[out] result  Where to store the version information
+  *
+  * @retval OMRX_OK  Value read successfully and stored in `result`
+  */
+omrx_status_t omrx_get_version(omrx_t omrx, uint32_t *result) {
+    return omrx_get_attr_uint32(omrx->root_chunk, OMRX_ATTR_VER, result);
+}
+
+/** @brief Close an OMRX instance opened using omrx_open()
+  *
+  * Once a file is closed, data which was previously read will still be
+  * available, but attempts to access attributes not previously read will fail.
+  * It is therefore important if you wish to continue accessing the OMRX
+  * instance after closing it that you make sure you have loaded all data you
+  * wish to access before calling omrx_close().
+  *
+  * @param[in] omrx  The OMRX instance to close
+  *
+  * @retval OMRX_OK          Closed successfully
+  * @retval OMRX_WARN_OSERR  Could not close underlying file object
+  */
 omrx_status_t omrx_close(omrx_t omrx) {
     if (!omrx->fp) {
         return omrx_error(omrx, OMRX_ERR_NOT_OPEN, "omrx_close() called on non-open OMRX handle");
@@ -1055,7 +1212,7 @@ omrx_status_t omrx_write(omrx_t omrx, const char *filename) {
 
 /** @} */
 
-/** @defgroup chunkapi Chunk-based API
+/** @defgroup chunkapi Chunk-Based API
   *
   * @brief Manipulating chunks and attributes
   *
@@ -1222,14 +1379,14 @@ omrx_status_t omrx_set_attr_str(omrx_chunk_t chunk, uint16_t id, omrx_ownership_
         CHECK_ERR(chunk_add_attr(chunk, attr));
     }
     if (attr->datatype != OMRX_DTYPE_UTF8) {
-        return omrx_error(omrx, OMRX_ERR_BAD_DTYPE, "Attempt to set string value for non-string attribute %s:%04x (type=%04x).", chunk->tag, id, attr->datatype);
+        return omrx_error(omrx, OMRX_ERR_WRONG_DTYPE, "Attempt to set string value for non-string attribute %s:%04x (type=%04x).", chunk->tag, id, attr->datatype);
     }
     if (attr->data) {
         // FIXME: do we need to worry about people with refs to this?
-        free(attr->data);
+        omrx->free(omrx, attr->data);
     }
     if (own == OMRX_COPY) {
-        attr->data = strdup(str);
+        attr->data = omrx_strdup(omrx, str);
         CHECK_ALLOC(omrx, attr->data);
     } else {
         attr->data = str;
@@ -1295,7 +1452,7 @@ omrx_status_t omrx_get_attr_str(omrx_chunk_t chunk, uint16_t id, char **dest) {
         return API_RESULT(omrx, OMRX_STATUS_NOT_FOUND);
     }
     if (attr->datatype != OMRX_DTYPE_UTF8) {
-        return omrx_error(omrx, OMRX_ERR_BAD_DTYPE, "Attempt to get string value of non-string attribute %s:%04x (type=%04x).", chunk->tag, id, attr->datatype);
+        return omrx_error(omrx, OMRX_ERR_WRONG_DTYPE, "Attempt to get string value of non-string attribute %s:%04x (type=%04x).", chunk->tag, id, attr->datatype);
     }
     if (!attr->data) {
         CHECK_ERR(load_attr_data(attr));
@@ -1318,10 +1475,10 @@ omrx_status_t omrx_set_attr_uint32(omrx_chunk_t chunk, uint16_t id, uint32_t val
         CHECK_ERR(chunk_add_attr(chunk, attr));
     }
     if (attr->datatype != OMRX_DTYPE_U32) {
-        return omrx_error(omrx, OMRX_ERR_BAD_DTYPE, "Attempt to set uint32 value for non-uint32 attribute %s:%04x (type=%04x).", chunk->tag, id, attr->datatype);
+        return omrx_error(omrx, OMRX_ERR_WRONG_DTYPE, "Attempt to set uint32 value for non-uint32 attribute %s:%04x (type=%04x).", chunk->tag, id, attr->datatype);
     }
     if (!attr->data) {
-        attr->data = malloc(4);
+        attr->data = omrx->alloc(omrx, 4);
         CHECK_ALLOC(omrx, attr->data);
     }
     *((uint32_t *)attr->data) = value;
@@ -1341,7 +1498,7 @@ omrx_status_t omrx_get_attr_uint32(omrx_chunk_t chunk, uint16_t id, uint32_t *de
         return API_RESULT(omrx, OMRX_STATUS_NOT_FOUND);
     }
     if (attr->datatype != OMRX_DTYPE_U32) {
-        return omrx_error(omrx, OMRX_ERR_BAD_DTYPE, "Attempt to get uint32 value of non-uint32 attribute %s:%04x (type=%04x).", chunk->tag, id, attr->datatype);
+        return omrx_error(omrx, OMRX_ERR_WRONG_DTYPE, "Attempt to get uint32 value of non-uint32 attribute %s:%04x (type=%04x).", chunk->tag, id, attr->datatype);
     }
     if (!attr->data) {
         CHECK_ERR(load_attr_data(attr));
@@ -1364,15 +1521,15 @@ omrx_status_t omrx_set_attr_float32_array(omrx_chunk_t chunk, uint16_t id, omrx_
         CHECK_ERR(chunk_add_attr(chunk, attr));
     }
     if (attr->datatype != OMRX_DTYPE_F32_ARRAY) {
-        return omrx_error(omrx, OMRX_ERR_BAD_DTYPE, "Attempt to set float-array value for non-float-array attribute %s:%04x (type=%04x).", chunk->tag, id, attr->datatype);
+        return omrx_error(omrx, OMRX_ERR_WRONG_DTYPE, "Attempt to set float-array value for non-float-array attribute %s:%04x (type=%04x).", chunk->tag, id, attr->datatype);
     }
     if (attr->data) {
-        free(attr->data);
+        omrx->free(omrx, attr->data);
     }
     attr->size = 4 * rows * cols;
     attr->cols = cols;
     if (own == OMRX_COPY) {
-        attr->data = malloc(attr->size);
+        attr->data = omrx->alloc(omrx, attr->size);
         CHECK_ALLOC(omrx, attr->data);
         memcpy(attr->data, data, attr->size);
     } else {
@@ -1394,7 +1551,7 @@ omrx_status_t omrx_get_attr_float32_array(omrx_chunk_t chunk, uint16_t id, uint1
         return API_RESULT(omrx, OMRX_STATUS_NOT_FOUND);
     }
     if (attr->datatype != OMRX_DTYPE_F32_ARRAY) {
-        return omrx_error(omrx, OMRX_ERR_BAD_DTYPE, "Attempt to get float32-array value of non-float32-array attribute %s:%04x (type=%04x).", chunk->tag, id, attr->datatype);
+        return omrx_error(omrx, OMRX_ERR_WRONG_DTYPE, "Attempt to get float32-array value of non-float32-array attribute %s:%04x (type=%04x).", chunk->tag, id, attr->datatype);
     }
     if (!attr->data) {
         CHECK_ERR(load_attr_data(attr));

@@ -46,7 +46,7 @@ int main(int argc, char *argv[]) {
 
     // Add a VRTx chunk under mESH with some vertex data
     CHECK_OMRX_ERR(omrx_add_chunk(chunk, "VRTx", &chunk));
-    CHECK_OMRX_ERR(omrx_set_attr_float32_array(chunk, OMRX_ATTR_DATA, OMRX_OWN, 3, num_points, point_data));
+    CHECK_OMRX_ERR(omrx_set_attr_float32_array(chunk, OMRX_ATTR_DATA, OMRX_TAKE, 3, num_points, point_data));
 
     // Write it out
     CHECK_OMRX_ERR(omrx_write(omrx, filename));
