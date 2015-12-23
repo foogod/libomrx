@@ -180,8 +180,9 @@ void omrx_default_log_warning(omrx_t omrx, omrx_status_t errcode, const char *ms
 void omrx_default_log_error(omrx_t omrx, omrx_status_t errcode, const char *msg);
 
 omrx_status_t omrx_initialize(int api_ver, omrx_log_func_t warn_func, omrx_log_func_t err_func, omrx_alloc_func_t alloc_func, omrx_free_func_t free_func);
-omrx_status_t omrx_new(omrx_t *result);
+omrx_status_t omrx_new(void *user_data, omrx_t *result);
 omrx_status_t omrx_free(omrx_t omrx);
+void *omrx_user_data(omrx_t omrx);
 omrx_status_t omrx_status(omrx_t omrx, bool reset);
 omrx_status_t omrx_last_result(omrx_t omrx);
 omrx_status_t omrx_get_version(omrx_t omrx, uint32_t *result);

@@ -37,7 +37,7 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    CHECK_OMRX_ERR(omrx_new(&omrx));
+    CHECK_OMRX_ERR(omrx_new(NULL, &omrx));
 
     // Add a toplevel mESH chunk with id="test"
     CHECK_OMRX_ERR(omrx_get_root_chunk(omrx, &chunk));

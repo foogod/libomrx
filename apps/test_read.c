@@ -28,7 +28,7 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    CHECK_OMRX_ERR(omrx_new(&omrx));
+    CHECK_OMRX_ERR(omrx_new(NULL, &omrx));
     CHECK_OMRX_ERR(omrx_open(omrx, filename, NULL));
 
     // Find the mESH chunk with id="test" and get its first VRTx child

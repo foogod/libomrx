@@ -45,6 +45,7 @@ struct omrx {
     size_t chunk_id_map_size;
     omrx_status_t status;
     omrx_status_t last_result;
+    void *user_data;
 };
 
 struct omrx_chunk {
@@ -836,20 +837,18 @@ static uint32_t get_elem_size(uint16_t dtype, uint32_t total_size) {
   * @brief Convenience wrapper for omrx_initialize()
   *
   * The first call into libomrx from any application must be either omrx_init()
-  * or omrx_initialize().  You can use omrx_initialize() if you wish to override some
-  * of the default parameters, such as the default log handling functions (see
-  * omrx_initialize() for details).  However, if you want to use the defaults, you
-  * can simply call omrx_init() instead.
+  * or omrx_initialize().  You can use omrx_initialize() if you wish to
+  * override some of the default parameters, such as the default log handling
+  * functions (see omrx_initialize() for details).  However, if default values
+  * for these parameters are acceptable (as is often the case), omrx_init() can
+  * be used as a simpler alternative.
   *
-  * omrx_init() should be called once and only once, before any other libomrx
-  * functions/macros are used.
+  * Using omrx_init() is equivalent to the following:
+  * @code
+  * omrx_initialize(OMRX_API_VER, omrx_default_log_warning, omrx_default_log_error, NULL, NULL)
+  * @endcode
   *
-  * @retval ::OMRX_OK         Library initialization successful
-  * @retval ::OMRX_ERR_BADAPI Initialization failed: The passed API version does
-  *                           not match the version the library was compiled
-  *                           with.  (This generally indicates the application
-  *                           was compiled with a different version of the
-  *                           headers than the library)
+  * omrx_init() takes no parameters.  Return values are the same as for omrx_initialize().
   *
   * @note Unlike other libomrx functions, if omrx_init() returns an error
   * result, no error message is logged.  It is up to the application to print
@@ -915,12 +914,19 @@ omrx_status_t omrx_initialize(int api_ver, omrx_log_func_t warn_func, omrx_log_f
 
 /** @brief Create a new (empty) OMRX instance and return its handle.
   *
-  * @param[out] result  A handle to the OMRX instance created
+  * Optionally, a pointer (to anything) can be provided via the `user_data`
+  * parameter which will be associated with the new OMRX instance.  This
+  * pointer is not used in any way by libomrx, but can be used to store
+  * application-specific data which should be associated with the instance, and
+  * can be retrieved later with omrx_user_data().
+  *
+  * @param[in] user_data  Optional pointer to arbitrary application data
+  * @param[out] result    A handle to the OMRX instance created
   *
   * @retval ::OMRX_OK        Instance created successfully
   * @retval ::OMRX_ERR_ALLOC Creation failed due to lack of memory
   */
-omrx_status_t omrx_new(omrx_t *result) {
+omrx_status_t omrx_new(void *user_data, omrx_t *result) {
     omrx_t omrx;
 
     if (!default_alloc) {
@@ -936,6 +942,7 @@ omrx_status_t omrx_new(omrx_t *result) {
         *result = NULL;
         return OMRX_ERR_ALLOC;
     }
+    omrx->user_data = user_data;
     omrx->alloc = default_alloc;
     omrx->free = default_free;
     omrx->message = omrx->alloc(omrx, OMRX_ERRMSG_BUFSIZE);
@@ -974,6 +981,10 @@ omrx_status_t omrx_new(omrx_t *result) {
   * instance itself).  The provided handle should not be used for any future
   * calls.
   *
+  * @note If a `user_data` pointer was provided when calling omrx_new(), the
+  * user data is *not* freed by this function.  It is up to the application to
+  * clean up any related application data if required.
+  *
   * @param[in] omrx The OMRX instance to release.
   *
   * @retval ::OMRX_OK  Instance freed successfully
@@ -1005,6 +1016,17 @@ omrx_status_t omrx_free(omrx_t omrx) {
     omrx->free(omrx, omrx);
 
     return status;
+}
+
+/** @brief Retrieve the user_data pointer provided when calling omrx_new()
+  *
+  * @param[in] omrx  The OMRX instance
+  *
+  * @returns The value provided as the `user_data` parameter when omrx_new()
+  * was called.
+  */
+void *omrx_user_data(omrx_t omrx) {
+    return omrx->user_data;
 }
 
 /** @brief Return the status code from the last libomrx call
