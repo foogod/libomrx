@@ -268,10 +268,13 @@ omrx_status_t omrx_os_error(omrx_t omrx, omrx_status_t errcode, const char *fmt,
 ///////////////////////////////////
 
 static void *omrx_default_alloc(omrx_t omrx, size_t size) {
-    return malloc(size);
+    void *ptr = malloc(size);
+    //LOG("- malloc %p\n", ptr);
+    return ptr;
 }
 
 static void omrx_default_free(omrx_t omrx, void *ptr) {
+    //LOG("- free %p\n", ptr);
     free(ptr);
 }
 
@@ -344,6 +347,7 @@ static omrx_chunk_t new_chunk(omrx_t omrx, const char *tag) {
 
     chunk = omrx->alloc(omrx, sizeof(struct omrx_chunk));
     if (!chunk) return NULL;
+    memset(chunk, 0, sizeof(struct omrx_chunk));
 
     chunk->omrx = omrx;
     chunk->next = NULL;
@@ -406,6 +410,7 @@ static omrx_attr_t new_attr(omrx_chunk_t chunk, uint16_t id, uint16_t datatype, 
 
     attr = omrx->alloc(omrx, sizeof(struct omrx_attr));
     if (!attr) return NULL;
+    memset(attr, 0, sizeof(struct omrx_attr));
 
     attr->chunk = chunk;
     attr->next = NULL;
@@ -942,6 +947,8 @@ omrx_status_t omrx_new(void *user_data, omrx_t *result) {
         *result = NULL;
         return OMRX_ERR_ALLOC;
     }
+    memset(omrx, 0, sizeof(struct omrx));
+
     omrx->user_data = user_data;
     omrx->alloc = default_alloc;
     omrx->free = default_free;
