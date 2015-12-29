@@ -123,14 +123,14 @@ if(DOXYGEN_FOUND)
     file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/doc)
 
     configure_file(
-        ${CMAKE_CURRENT_SOURCE_DIR}/Doxyfile.api.in
-        ${CMAKE_CURRENT_BINARY_DIR}/Doxyfile.api
+        ${CMAKE_CURRENT_SOURCE_DIR}/misc/Doxyfile.api.in
+        ${CMAKE_CURRENT_BINARY_DIR}/doc/Doxyfile.api
         @ONLY
     )
     add_custom_command(
         OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/doc/api/.build.timestamp
         DEPENDS ${libomrx_public_headers} ${libomrx_sources}
-        COMMAND ${DOXYGEN_EXECUTABLE} Doxyfile.api > /dev/null
+        COMMAND ${DOXYGEN_EXECUTABLE} doc/Doxyfile.api > /dev/null
         COMMAND touch doc/api/.build.timestamp
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
         COMMENT "Generating API documentation with Doxygen" VERBATIM
@@ -141,14 +141,14 @@ if(DOXYGEN_FOUND)
     )
 
     configure_file(
-        ${CMAKE_CURRENT_SOURCE_DIR}/Doxyfile.internal.in
-        ${CMAKE_CURRENT_BINARY_DIR}/Doxyfile.internal
+        ${CMAKE_CURRENT_SOURCE_DIR}/misc/Doxyfile.internal.in
+        ${CMAKE_CURRENT_BINARY_DIR}/doc/Doxyfile.internal
         @ONLY
     )
     add_custom_command(
         OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/doc/internal/.build.timestamp
         DEPENDS ${libomrx_public_headers} ${libomrx_sources}
-        COMMAND ${DOXYGEN_EXECUTABLE} Doxyfile.internal > /dev/null
+        COMMAND ${DOXYGEN_EXECUTABLE} doc/Doxyfile.internal > /dev/null
         COMMAND touch doc/internal/.build.timestamp
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
         COMMENT "Generating internal docs with Doxygen" VERBATIM
@@ -177,31 +177,32 @@ endif(DOXYGEN_FOUND)
 include(CMakePackageConfigHelpers)
 
 configure_package_config_file(
-    libomrx-config.cmake.in ${CMAKE_CURRENT_BINARY_DIR}/libomrx-config.cmake
+    ${CMAKE_CURRENT_SOURCE_DIR}/misc/libomrx-config.cmake.in
+    ${CMAKE_CURRENT_BINARY_DIR}/conf/libomrx-config.cmake
     INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/libomrx/cmake
     PATH_VARS INCLUDE_INSTALL_DIR LIB_INSTALL_DIR
 )
 write_basic_package_version_file(
-    ${CMAKE_CURRENT_BINARY_DIR}/libomrx-config-version.cmake
+    ${CMAKE_CURRENT_BINARY_DIR}/conf/libomrx-config-version.cmake
     VERSION ${LIBOMRX_VERSION}
     COMPATIBILITY SameMajorVersion
 )
 
 install(
-    FILES ${CMAKE_CURRENT_BINARY_DIR}/libomrx-config.cmake
-          ${CMAKE_CURRENT_BINARY_DIR}/libomrx-config-version.cmake
+    FILES ${CMAKE_CURRENT_BINARY_DIR}/conf/libomrx-config.cmake
+          ${CMAKE_CURRENT_BINARY_DIR}/conf/libomrx-config-version.cmake
     DESTINATION ${LIB_INSTALL_DIR}/cmake/libomrx
 )
 
 # Create/install libomrx.pc file for pkg-config
 
 configure_file(
-    ${CMAKE_CURRENT_SOURCE_DIR}/libomrx.pc.in
-    ${CMAKE_CURRENT_BINARY_DIR}/libomrx.pc
+    ${CMAKE_CURRENT_SOURCE_DIR}/misc/libomrx.pc.in
+    ${CMAKE_CURRENT_BINARY_DIR}/conf/libomrx.pc
     @ONLY
 )
 install(
-    FILES ${CMAKE_CURRENT_BINARY_DIR}/libomrx.pc
+    FILES ${CMAKE_CURRENT_BINARY_DIR}/conf/libomrx.pc
     DESTINATION ${LIB_INSTALL_DIR}/pkgconfig
 )
 

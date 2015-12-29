@@ -10,11 +10,11 @@ python/*.c
 bin/
 doc/
 lib/
+conf/
 Makefile
 CMakeCache.txt
 CMakeFiles/
-*.cmake
+cmake_install.cmake
 Doxyfile.api
 Doxyfile.internal
 install_manifest.txt
-libomrx.pc
