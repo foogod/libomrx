@@ -1,6 +1,10 @@
 *.o
 *.a
+*.so
+*.pyc
+.swp
 .*.swp
 bin/
 doc/
 lib/
+python/*.c

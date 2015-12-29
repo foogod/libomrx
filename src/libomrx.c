@@ -1441,6 +1441,7 @@ omrx_status_t omrx_get_attr_info(omrx_chunk_t chunk, uint16_t id, struct omrx_at
     }
     info->exists = true;
     info->encoded_type = attr->datatype;
+    info->raw_type = attr->datatype;
     info->size = attr->size;
     info->elem_size = get_elem_size(attr->datatype, attr->size);
     if (OMRX_IS_ARRAY_DTYPE(attr->datatype)) {
@@ -1465,6 +1466,31 @@ omrx_status_t omrx_get_attr_info(omrx_chunk_t chunk, uint16_t id, struct omrx_at
             info->elem_size = info->size;
         }
     }
+
+    return API_RESULT(omrx, OMRX_OK);
+}
+
+omrx_status_t omrx_get_attr_raw(omrx_chunk_t chunk, uint16_t id, size_t *size, void **data) {
+    if (!chunk) return OMRX_STATUS_NO_OBJECT;
+
+    omrx_t omrx = chunk->omrx;
+    omrx_attr_t attr = NULL;
+
+    CHECK_ERR(find_attr(chunk, id, &attr));
+    if (!attr) {
+        if (size) {
+            *size = 0;
+        }
+        *data = NULL;
+        return API_RESULT(omrx, OMRX_STATUS_NOT_FOUND);
+    }
+    if (!attr->data) {
+        CHECK_ERR(load_attr_data(attr));
+    }
+    if (size) {
+        *size = attr->size;
+    }
+    *data = attr->data;
 
     return API_RESULT(omrx, OMRX_OK);
 }
