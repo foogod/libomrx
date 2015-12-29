@@ -4,13 +4,17 @@
 *.pyc
 .swp
 .*.swp
+python/*.c
+
+# The following are byproducts of running cmake as an in-source build
 bin/
 doc/
 lib/
-python/*.c
 Makefile
 CMakeCache.txt
 CMakeFiles/
-cmake_install.cmake
+*.cmake
 Doxyfile.api
 Doxyfile.internal
+install_manifest.txt
+libomrx.pc
