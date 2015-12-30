@@ -12,7 +12,7 @@ endif(NOT DEFINED CMAKE_INSTALL_LIBDIR)
 
 if (NOT CMAKE_BUILD_TYPE)
     message(STATUS "CMAKE_BUILD_TYPE not set, defaulting to RelWithDebInfo")
-    set(CMAKE_BUILD_TYPE "RelWithDebInfo")
+    set(CMAKE_BUILD_TYPE "RelWithDebInfo" CACHE STRING "Type of build, options are: None Debug Release RelWithDebInfo MinSizeRel" FORCE)
 endif(NOT CMAKE_BUILD_TYPE)
 
 # Options / Flags
@@ -33,11 +33,10 @@ else()
     option(INSTALL_DOCS "Install API documentation" ON)
 endif()
 
-# TODO: make these cache/options
-set(BIN_INSTALL_DIR bin)
-set(LIB_INSTALL_DIR ${CMAKE_INSTALL_LIBDIR})
-set(INCLUDE_INSTALL_DIR include)
-set(DOC_INSTALL_DIR doc)
+set(BIN_INSTALL_DIR bin CACHE STRING "Install subdirectory for executables")
+set(LIB_INSTALL_DIR ${CMAKE_INSTALL_LIBDIR} CACHE STRING "Install subdirectory for libraries")
+set(INCLUDE_INSTALL_DIR include CACHE STRING "Install subdirectory for include files")
+set(DOC_INSTALL_DIR doc CACHE STRING "Install subdirectory for documentation")
 
 # Sources
 
@@ -66,7 +65,6 @@ if(LIBOMRX_SHARED)
 
     install(
         TARGETS ${LIBOMRX_LIB_NAME}
-        EXPORT libomrx_targets
         RUNTIME DESTINATION ${BIN_INSTALL_DIR}
         LIBRARY DESTINATION ${LIB_INSTALL_DIR}
         ARCHIVE DESTINATION ${LIB_INSTALL_DIR}
@@ -99,7 +97,6 @@ if(LIBOMRX_STATIC)
 
     install(
         TARGETS ${LIBOMRX_LIB_NAME_STATIC}
-        EXPORT libomrx_targets
         RUNTIME DESTINATION ${BIN_INSTALL_DIR}
         LIBRARY DESTINATION ${LIB_INSTALL_DIR}
         ARCHIVE DESTINATION ${LIB_INSTALL_DIR}
