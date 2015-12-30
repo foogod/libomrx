@@ -1,4 +1,4 @@
-cmake_minimum_required (VERSION 2.6)
+cmake_minimum_required (VERSION 2.8)
 project (libomrx)
 
 include_directories ("${PROJECT_SOURCE_DIR}/include")
@@ -59,8 +59,14 @@ if(LIBOMRX_SHARED)
     add_library(${LIBOMRX_LIB_NAME} SHARED ${libomrx_sources})
     if(MSVC)
         # msvc does not append 'lib' - do it here to have consistent name
-        set_target_properties(${LIBOMRX_LIB_NAME} PROPERTIES PREFIX "lib")
-        set_target_properties(${LIBOMRX_LIB_NAME} PROPERTIES IMPORT_PREFIX "lib")
+        set_target_properties(
+            ${LIBOMRX_LIB_NAME}
+            PROPERTIES PREFIX "lib"
+        )
+        set_target_properties(
+            ${LIBOMRX_LIB_NAME}
+            PROPERTIES IMPORT_PREFIX "lib"
+        )
     endif(MSVC)
 
     install(
@@ -80,8 +86,7 @@ if(LIBOMRX_STATIC)
         # msvc does not append 'lib' - do it here to have consistent name
         set_target_properties(
             ${LIBOMRX_LIB_NAME_STATIC}
-            PROPERTIES
-                PREFIX "lib"
+            PROPERTIES PREFIX "lib"
         )
     else(MSVC)
         # MSVC doesn't use a different file extension for shared vs. static
@@ -89,9 +94,7 @@ if(LIBOMRX_STATIC)
         # for all other platforms.
         set_target_properties(
             ${LIBOMRX_LIB_NAME_STATIC}
-            PROPERTIES
-                OUTPUT_NAME ${LIBOMRX_LIB_NAME}
-                CLEAN_DIRECT_OUTPUT 1
+            PROPERTIES OUTPUT_NAME ${LIBOMRX_LIB_NAME}
         )
     endif(MSVC)
 
@@ -155,9 +158,12 @@ if(DOXYGEN_FOUND)
         DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/doc/internal/.build.timestamp
     )
 
-    set_directory_properties(
-        PROPERTY ADDITIONAL_MAKE_CLEAN_FILES
-            "${CMAKE_CURRENT_BINARY_DIR}/doc/api;${CMAKE_CURRENT_BINARY_DIR}/doc/internal"
+    set(EXTRA_CLEANUP_FILES
+        ${EXTRA_CLEANUP_FILES}
+        ${CMAKE_CURRENT_BINARY_DIR}/doc/Doxyfile.api
+        ${CMAKE_CURRENT_BINARY_DIR}/doc/api
+        ${CMAKE_CURRENT_BINARY_DIR}/doc/Doxyfile.internal
+        ${CMAKE_CURRENT_BINARY_DIR}/doc/internal
     )
 
     if(INSTALL_DOCS)
@@ -179,6 +185,7 @@ configure_package_config_file(
     INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/libomrx/cmake
     PATH_VARS INCLUDE_INSTALL_DIR LIB_INSTALL_DIR
 )
+
 write_basic_package_version_file(
     ${CMAKE_CURRENT_BINARY_DIR}/conf/libomrx-config-version.cmake
     VERSION ${LIBOMRX_VERSION}
@@ -191,6 +198,12 @@ install(
     DESTINATION ${LIB_INSTALL_DIR}/cmake/libomrx
 )
 
+set(EXTRA_CLEANUP_FILES
+    ${EXTRA_CLEANUP_FILES}
+    ${CMAKE_CURRENT_BINARY_DIR}/conf/libomrx-config.cmake
+    ${CMAKE_CURRENT_BINARY_DIR}/conf/libomrx-config-version.cmake
+)
+
 # Create/install libomrx.pc file for pkg-config
 
 configure_file(
@@ -198,11 +211,23 @@ configure_file(
     ${CMAKE_CURRENT_BINARY_DIR}/conf/libomrx.pc
     @ONLY
 )
+
 install(
     FILES ${CMAKE_CURRENT_BINARY_DIR}/conf/libomrx.pc
     DESTINATION ${LIB_INSTALL_DIR}/pkgconfig
 )
 
+set(EXTRA_CLEANUP_FILES
+    ${EXTRA_CLEANUP_FILES}
+    ${CMAKE_CURRENT_BINARY_DIR}/conf/libomrx.pc
+)
+
 # Include CMakeList.txt from 'apps' subdirectory to build apps/programs
 
 add_subdirectory(apps)
+
+# Make sure we clean up additional files when 'make clean' is run
+
+set_directory_properties(
+    PROPERTY ADDITIONAL_MAKE_CLEAN_FILES "${EXTRA_CLEANUP_FILES}"
+)
