@@ -52,13 +52,12 @@ static omrx_status_t free_all_chunks(omrx_chunk_t chunk);
 static omrx_attr_t new_attr(omrx_chunk_t chunk, uint16_t id, uint16_t datatype, uint32_t size, off_t file_pos);
 static omrx_status_t free_attr(omrx_attr_t attr);
 
-static omrx_status_t load_attr_data(omrx_attr_t attr);
+static omrx_status_t load_attr_data(omrx_attr_t attr, void **dest);
 static omrx_status_t release_attr_data(omrx_attr_t attr);
-static omrx_status_t freeze_attr_data(omrx_attr_t attr);
 static omrx_status_t find_attr(omrx_chunk_t chunk, uint16_t id, omrx_attr_t *dest);
 static omrx_status_t chunk_add_attr(omrx_chunk_t chunk, omrx_attr_t attr);
 static omrx_status_t add_child_chunk(omrx_chunk_t parent, omrx_chunk_t child);
-static omrx_status_t register_chunk_id(omrx_chunk_t chunk, const char *idstr);
+static omrx_status_t register_chunk_id(omrx_chunk_t chunk, char *idstr);
 static omrx_status_t deregister_chunk_id(omrx_chunk_t chunk);
 static omrx_status_t lookup_chunk_id(omrx_t omrx, const char *idstr, omrx_chunk_t *result);
 static omrx_status_t omrx_scan(omrx_t omrx);
@@ -310,6 +309,9 @@ static omrx_status_t free_chunk(omrx_chunk_t chunk) {
         if (rc != OMRX_OK) status = rc;
         attr = next_attr;
     }
+    if (chunk->id) {
+        omrx->free(omrx, chunk->id);
+    }
     omrx->free(omrx, chunk);
 
     return status;
@@ -367,30 +369,57 @@ static omrx_status_t free_attr(omrx_attr_t attr) {
     return OMRX_OK;
 }
 
-static omrx_status_t load_attr_data(omrx_attr_t attr) {
+// Note: it is important that this function leaves the file pointer after the
+// last byte of the read data as a couple of other things (i.e.
+// read_next_chunk) rely on that.
+static omrx_status_t load_attr_data(omrx_attr_t attr, void **dest) {
     omrx_t omrx = attr->chunk->omrx;
+    omrx_status_t status;
 
     if (attr->data) {
-        // Already loaded (or a non-file-backed attr with data already defined)
+        // Attribute is not file backed or has locally-modified value.  Just
+        // copy what's in memory.
+        if (attr->datatype == OMRX_DTYPE_UTF8) {
+            // For strings, make sure there's a zero-byte at the end.
+            *dest = omrx->alloc(omrx, attr->size + 1);
+            CHECK_ALLOC(omrx, *dest);
+            memcpy(*dest, attr->data, attr->size);
+            ((char *)(*dest))[attr->size] = 0;
+        } else {
+            *dest = omrx->alloc(omrx, attr->size);
+            CHECK_ALLOC(omrx, *dest);
+            memcpy(*dest, attr->data, attr->size);
+        }
         return OMRX_OK;
     }
     if (attr->file_pos < 0) {
         // We called load_attr_data on a non-file-backed attribute.
         // This is probably because we created a new (not read from a
         // file) attribute and forgot to assign data to it.
-        return omrx_error(omrx, OMRX_ERR_INTERNAL, "%s:%04x: Attribute has no data!", attr->chunk->tag, attr->id);
+        return omrx_error(omrx, OMRX_ERR_INTERNAL, "%s:%04x: Attempt to read from non-file-backed attribute!", attr->chunk->tag, attr->id);
     }
     CHECK_ERR(seek_to_pos(omrx, attr->file_pos));
     //FIXME: deal with non-raw encodings
     if (attr->datatype == OMRX_DTYPE_UTF8) {
         // For strings, make sure there's a zero-byte at the end.
-        attr->data = omrx->alloc(omrx, attr->size + 1);
-        CHECK_ERR(read_data(omrx, attr->size, attr->data));
-        ((char *)attr->data)[attr->size] = 0;
+        *dest = omrx->alloc(omrx, attr->size + 1);
+        CHECK_ALLOC(omrx, *dest);
+        status = read_data(omrx, attr->size, *dest);
+        if (status < 0) {
+            omrx->free(omrx, *dest);
+            *dest = NULL;
+            return status;
+        }
+        ((char *)(*dest))[attr->size] = 0;
     } else {
-        attr->data = omrx->alloc(omrx, attr->size);
-        CHECK_ALLOC(omrx, attr->data);
-        CHECK_ERR(read_data(omrx, attr->size, attr->data));
+        *dest = omrx->alloc(omrx, attr->size);
+        CHECK_ALLOC(omrx, *dest);
+        status = read_data(omrx, attr->size, *dest);
+        if (status < 0) {
+            omrx->free(omrx, *dest);
+            *dest = NULL;
+            return status;
+        }
     }
 
     return OMRX_OK;
@@ -407,22 +436,6 @@ static omrx_status_t release_attr_data(omrx_attr_t attr) {
         return OMRX_STATUS_NOT_FOUND;
     }
     omrx->free(omrx, attr->data);
-
-    return OMRX_OK;
-}
-
-static omrx_status_t freeze_attr_data(omrx_attr_t attr) {
-    if (attr->file_pos < 0) {
-        // Not a file-backed attribute (or already frozen).  Do nothing.
-        return OMRX_STATUS_NOT_FOUND;
-    }
-    if (!attr->data) {
-        // Not currently loaded.  Load it first.
-        CHECK_ERR(load_attr_data(attr));
-    }
-    // Now "freeze" it by removing its file backing info, so it can't be
-    // released later.
-    attr->file_pos = -1;
 
     return OMRX_OK;
 }
@@ -504,7 +517,7 @@ static omrx_status_t omrx_scan(omrx_t omrx) {
     return OMRX_OK;
 }
 
-static omrx_status_t register_chunk_id(omrx_chunk_t chunk, const char *idstr) {
+static omrx_status_t register_chunk_id(omrx_chunk_t chunk, char *idstr) {
     omrx_t omrx = chunk->omrx;
     int i;
     int next_free = -1;
@@ -547,11 +560,12 @@ static omrx_status_t deregister_chunk_id(omrx_chunk_t chunk) {
 
     if (chunk->id) {
         for (i = 0; i < omrx->chunk_id_map_size; i++) {
-            if (!strcmp(omrx->chunk_id_map[i].id, chunk->id)) {
+            if (omrx->chunk_id_map[i].id == chunk->id) {
                 omrx->chunk_id_map[i].id = NULL;
                 break;
             }
         }
+        free(chunk->id);
         chunk->id = NULL;
     }
 
@@ -580,6 +594,7 @@ static omrx_status_t read_next_chunk(omrx_t omrx) {
     uint32_t tagint;
     uint_fast16_t i;
     uint_fast16_t attr_count;
+    char *idstr;
 
     CHECK_ERR(read_data(omrx, CHUNKHDR_SIZE, &hdr));
     file_pos = ftello(omrx->fp);
@@ -618,9 +633,8 @@ static omrx_status_t read_next_chunk(omrx_t omrx) {
         if (attr_hdr.id == OMRX_ATTR_ID) {
             //FIXME: an error here isn't necessarily a fatal error
             if (attr_hdr.datatype == OMRX_DTYPE_UTF8) {
-                CHECK_ERR(load_attr_data(attr));
-                CHECK_ERR(freeze_attr_data(attr));
-                CHECK_ERR(register_chunk_id(chunk, attr->data));
+                CHECK_ERR(load_attr_data(attr, (void **)&idstr));
+                CHECK_ERR(register_chunk_id(chunk, idstr));
             } else {
                 omrx_warning(omrx, OMRX_WARN_BAD_ATTR, "%s:id attribute has wrong type (%04x).  Ignored.", &chunk->tag, attr_hdr.datatype);
                 CHECK_ERR(skip_data(omrx, attr->size));
@@ -710,16 +724,11 @@ static omrx_status_t write_attr_subheader_array(omrx_attr_t attr, FILE *fp) {
 static omrx_status_t write_attr(omrx_attr_t attr, FILE *fp) {
     omrx_t omrx = attr->chunk->omrx;
     struct attr_header hdr;
-    bool do_release = false;
+    void *data;
 
     hdr.id = UINT16_HTOF(attr->id);
     hdr.datatype = UINT16_HTOF(attr->datatype);
 
-    if (!attr->data) {
-        // We need to load the data before we can write it out again
-        CHECK_ERR(load_attr_data(attr));
-        do_release = true;
-    }
     if (OMRX_IS_ARRAY_DTYPE(attr->datatype)) {
         hdr.size = UINT32_HTOF(attr->size + 2);
         CHECK_ERR(write_data(omrx, sizeof(hdr), &hdr, fp));
@@ -729,9 +738,13 @@ static omrx_status_t write_attr(omrx_attr_t attr, FILE *fp) {
         CHECK_ERR(write_data(omrx, sizeof(hdr), &hdr, fp));
     }
     // FIXME: endianness of data, encoding, etc
-    CHECK_ERR(write_data(omrx, attr->size, attr->data, fp));
-    if (do_release) {
-        CHECK_ERR(release_attr_data(attr));
+    if (attr->data) {
+        CHECK_ERR(write_data(omrx, attr->size, attr->data, fp));
+    } else {
+        // We need to load the data before we can write it out again
+        CHECK_ERR(load_attr_data(attr, &data));
+        CHECK_ERR(write_data(omrx, attr->size, data, fp));
+        omrx->free(omrx, data);
     }
 
     return OMRX_OK;
@@ -1081,7 +1094,7 @@ void omrx_default_log_error(omrx_t omrx, omrx_status_t errcode, const char *msg)
   * opened and read.  If `fp` is not `NULL`, then it should be an open `FILE`
   * pointer (opened for reading in binary mode) which will be used instead.  In
   * this case `filename` can still be provided, and will be used in
-  * informational messages, etc, as the name of the open file.
+  * error/warning messages, etc, as the name of the open file.
   *
   * @param[in] omrx     The OMRX instance to use
   * @param[in] filename The name of the file to open
@@ -1332,6 +1345,8 @@ omrx_status_t omrx_set_attr_str(omrx_chunk_t chunk, uint16_t id, omrx_ownership_
     omrx_t omrx = chunk->omrx;
     omrx_attr_t attr = NULL;
 
+    //FIXME: check for OMRX_ATTR_ID and handle it specially
+
     CHECK_ERR(find_attr(chunk, id, &attr));
     if (!attr) {
         attr = new_attr(chunk, id, OMRX_DTYPE_UTF8, 0, -1);
@@ -1402,6 +1417,10 @@ omrx_status_t omrx_get_attr_info(omrx_chunk_t chunk, uint16_t id, struct omrx_at
 }
 
 omrx_status_t omrx_get_attr_raw(omrx_chunk_t chunk, uint16_t id, size_t *size, void **data) {
+    *data = NULL;
+    if (size) {
+        *size = 0;
+    }
     if (!chunk) return OMRX_STATUS_NO_OBJECT;
 
     omrx_t omrx = chunk->omrx;
@@ -1409,24 +1428,18 @@ omrx_status_t omrx_get_attr_raw(omrx_chunk_t chunk, uint16_t id, size_t *size, v
 
     CHECK_ERR(find_attr(chunk, id, &attr));
     if (!attr) {
-        if (size) {
-            *size = 0;
-        }
-        *data = NULL;
         return API_RESULT(omrx, OMRX_STATUS_NOT_FOUND);
     }
-    if (!attr->data) {
-        CHECK_ERR(load_attr_data(attr));
-    }
+    CHECK_ERR(load_attr_data(attr, data));
     if (size) {
         *size = attr->size;
     }
-    *data = attr->data;
 
     return API_RESULT(omrx, OMRX_OK);
 }
 
 omrx_status_t omrx_get_attr_str(omrx_chunk_t chunk, uint16_t id, char **dest) {
+    *dest = NULL;
     if (!chunk) return OMRX_STATUS_NO_OBJECT;
 
     omrx_t omrx = chunk->omrx;
@@ -1434,16 +1447,12 @@ omrx_status_t omrx_get_attr_str(omrx_chunk_t chunk, uint16_t id, char **dest) {
 
     CHECK_ERR(find_attr(chunk, id, &attr));
     if (!attr) {
-        *dest = NULL;
         return API_RESULT(omrx, OMRX_STATUS_NOT_FOUND);
     }
     if (attr->datatype != OMRX_DTYPE_UTF8) {
         return omrx_error(omrx, OMRX_ERR_WRONG_DTYPE, "Attempt to get string value of non-string attribute %s:%04x (type=%04x).", chunk->tag, id, attr->datatype);
     }
-    if (!attr->data) {
-        CHECK_ERR(load_attr_data(attr));
-    }
-    *dest = attr->data;
+    CHECK_ERR(load_attr_data(attr, (void **)dest));
 
     return API_RESULT(omrx, OMRX_OK);
 }
@@ -1487,7 +1496,7 @@ omrx_status_t omrx_get_attr_uint32(omrx_chunk_t chunk, uint16_t id, uint32_t *de
         return omrx_error(omrx, OMRX_ERR_WRONG_DTYPE, "Attempt to get uint32 value of non-uint32 attribute %s:%04x (type=%04x).", chunk->tag, id, attr->datatype);
     }
     if (!attr->data) {
-        CHECK_ERR(load_attr_data(attr));
+        CHECK_ERR(load_attr_data(attr, &attr->data));
     }
     *dest = *((uint32_t *)attr->data);
 
@@ -1526,6 +1535,13 @@ omrx_status_t omrx_set_attr_float32_array(omrx_chunk_t chunk, uint16_t id, omrx_
 }
 
 omrx_status_t omrx_get_attr_float32_array(omrx_chunk_t chunk, uint16_t id, uint16_t *cols, uint32_t *rows, float **data) {
+    *data = NULL;
+    if (cols) {
+        *cols = 0;
+    }
+    if (rows) {
+        *rows = 0;
+    }
     if (!chunk) return OMRX_STATUS_NO_OBJECT;
 
     omrx_t omrx = chunk->omrx;
@@ -1533,16 +1549,12 @@ omrx_status_t omrx_get_attr_float32_array(omrx_chunk_t chunk, uint16_t id, uint1
 
     CHECK_ERR(find_attr(chunk, id, &attr));
     if (!attr) {
-        *data = 0;
         return API_RESULT(omrx, OMRX_STATUS_NOT_FOUND);
     }
     if (attr->datatype != OMRX_DTYPE_F32_ARRAY) {
         return omrx_error(omrx, OMRX_ERR_WRONG_DTYPE, "Attempt to get float32-array value of non-float32-array attribute %s:%04x (type=%04x).", chunk->tag, id, attr->datatype);
     }
-    if (!attr->data) {
-        CHECK_ERR(load_attr_data(attr));
-    }
-    *data = (float *)attr->data;
+    CHECK_ERR(load_attr_data(attr, (void **)data));
     if (cols) {
         *cols = attr->cols;
     }

@@ -44,7 +44,7 @@ struct omrx_chunk {
     uint32_t tagint;
     uint16_t attr_count;
     struct omrx_attr *attrs;
-    const char *id;
+    char *id;
     off_t file_position;
 };
 

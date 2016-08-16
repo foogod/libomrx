@@ -1,13 +1,14 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <mcheck.h>
 
 #include "omrx.h"
 
 #define CHECK_OMRX_ERR(x) if ((x) < 0) { fprintf(stderr, "Unexpected error from libomrx.  Exiting.\n"); exit(1); }
 
 int main(int argc, char *argv[]) {
-    struct omrx *omrx;
-    struct omrx_chunk *chunk;
+    omrx_t omrx;
+    omrx_chunk_t chunk;
     float *point_data;
     uint16_t cols;
     uint32_t rows;
@@ -18,6 +19,8 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "Usage: %s filename\n", argv[0]);
         return 1;
     }
+
+    mtrace();
 
     filename = argv[1];
 
@@ -45,6 +48,8 @@ int main(int argc, char *argv[]) {
         }
         printf("\n");
     }
+
+    free(point_data);
 
     CHECK_OMRX_ERR(omrx_free(omrx));
 
