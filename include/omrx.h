@@ -16,6 +16,20 @@ typedef enum {
     OMRX_COPY,
 } omrx_ownership_t;
 
+typedef enum {
+    OMRX_MESH_VERTICES,
+    OMRX_MESH_NORMALS,
+    OMRX_MESH_MAT_IDX,
+    OMRX_MESH_TEXCOORDS,
+} omrx_meshdata_type_t;
+
+typedef enum {
+    OMRX_POLY_TRISTRIPS,
+    OMRX_POLY_TRIANGLES,
+    OMRX_POLY_QUADS,
+    OMRX_POLY_INVALID,
+} omrx_poly_type_t;
+
 /** @brief Opaque handle to an OMRX instance.
   *
   * Each OMRX instance represents a separate OMRX file.
@@ -96,14 +110,20 @@ typedef enum {
     /** An attempt was made to fetch data from an attribute which is incompatible with the type of data actually contained in the attribute */
     OMRX_ERR_WRONG_DTYPE  = -11,
     
+    /** An attempt was made to use a chunk in a way that does not match its type */
+    OMRX_ERR_WRONG_CHUNK  = -12,
+    
+    /** An attempt was made to reference a chunk by index, but that index is out of range or otherwise invalid */
+    OMRX_ERR_BADIDX       = -13,
+
     /** Internal error (this indicates a bug somewhere inside libomrx) */
-    OMRX_ERR_INTERNAL     = -12,
+    OMRX_ERR_INTERNAL     = -500,
 } omrx_status_t;
 
 
 #define OMRX_TYPEF_UNSIGNED 0x0000
-#define OMRX_TYPEF_SIGNED   0x0004
-#define OMRX_TYPEF_FLOAT    0x0008
+#define OMRX_TYPEF_SIGNED   0x0010
+#define OMRX_TYPEF_FLOAT    0x0020
 #define OMRX_TYPEF_SIMPLE   0x0000
 #define OMRX_TYPEF_ARRAY    0x1000
 #define OMRX_TYPEF_OTHER    0xf000
@@ -131,6 +151,7 @@ typedef enum {
     OMRX_DTYPE_F64_ARRAY = OMRX_TYPEF_ARRAY  | OMRX_DTYPE_F64,
     OMRX_DTYPE_UTF8      = OMRX_TYPEF_OTHER  | 0x000,
     OMRX_DTYPE_RAW       = OMRX_TYPEF_OTHER  | 0x001,
+    OMRX_DTYPE_INVALID   = OMRX_TYPEF_OTHER  | 0xfff,
 } omrx_dtype_t;
 
 #define OMRX_GET_SUBTYPE(dtype) ((dtype) & 0xff00)
@@ -195,7 +216,7 @@ omrx_status_t omrx_get_next_chunk(omrx_chunk_t chunk, const char *tag, omrx_chun
 omrx_status_t omrx_get_chunk_by_id(omrx_t omrx, const char *id, const char *tag, omrx_chunk_t *result);
 omrx_status_t omrx_get_child_by_id(omrx_chunk_t chunk, const char *tag, const char *id, omrx_chunk_t *result);
 omrx_status_t omrx_get_parent(omrx_chunk_t chunk, omrx_chunk_t *result);
-omrx_status_t omrx_add_chunk(omrx_chunk_t chunk, const char *tag, omrx_chunk_t *result);
+omrx_status_t omrx_add_chunk(omrx_chunk_t chunk, int index, const char *tag, omrx_chunk_t *result);
 omrx_status_t omrx_del_chunk(omrx_chunk_t chunk);
 omrx_status_t omrx_get_attr_info(omrx_chunk_t chunk, uint16_t id, struct omrx_attr_info *info);
 omrx_status_t omrx_get_attr_raw(omrx_chunk_t chunk, uint16_t id, size_t *size, void **data);
@@ -205,11 +226,27 @@ omrx_status_t omrx_set_attr_uint32(omrx_chunk_t chunk, uint16_t id, uint32_t val
 omrx_status_t omrx_get_attr_uint32(omrx_chunk_t chunk, uint16_t id, uint32_t *dest);
 omrx_status_t omrx_set_attr_float32_array(omrx_chunk_t chunk, uint16_t id, omrx_ownership_t own, uint16_t cols, uint32_t rows, float *data);
 omrx_status_t omrx_get_attr_float32_array(omrx_chunk_t chunk, uint16_t id, uint16_t *cols, uint32_t *rows, float **data);
-omrx_status_t omrx_release_attr_data(omrx_chunk_t chunk, uint16_t id);
+omrx_status_t omrx_release_attr_data(omrx_chunk_t chunk, uint16_t id, bool free_memory);
 omrx_status_t omrx_del_attr(omrx_chunk_t chunk, uint16_t id);
 omrx_status_t omrx_write(omrx_t omrx, const char *filename);
 
 #define omrx_init() omrx_initialize(OMRX_API_VER, omrx_default_log_warning, omrx_default_log_error, NULL, NULL)
+
+// Model API
+
+struct omrx_meshdata {
+    void *data;
+    omrx_dtype_t datatype;
+    uint_fast16_t cols;
+    uint_fast32_t rows;
+};
+
+struct omrx_polys {
+    omrx_poly_type_t polytype;
+    void *data;
+    omrx_dtype_t datatype;
+    uint_fast32_t count;
+};
 
 #ifdef  __cplusplus
 }

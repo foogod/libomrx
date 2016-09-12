@@ -56,7 +56,7 @@ static omrx_status_t load_attr_data(omrx_attr_t attr, void **dest);
 static omrx_status_t release_attr_data(omrx_attr_t attr);
 static omrx_status_t find_attr(omrx_chunk_t chunk, uint16_t id, omrx_attr_t *dest);
 static omrx_status_t chunk_add_attr(omrx_chunk_t chunk, omrx_attr_t attr);
-static omrx_status_t add_child_chunk(omrx_chunk_t parent, omrx_chunk_t child);
+static omrx_status_t add_child_chunk(omrx_chunk_t parent, int index, omrx_chunk_t child);
 static omrx_status_t register_chunk_id(omrx_chunk_t chunk, char *idstr);
 static omrx_status_t deregister_chunk_id(omrx_chunk_t chunk);
 static omrx_status_t lookup_chunk_id(omrx_t omrx, const char *idstr, omrx_chunk_t *result);
@@ -395,7 +395,8 @@ static omrx_status_t load_attr_data(omrx_attr_t attr, void **dest) {
     if (attr->file_pos < 0) {
         // We called load_attr_data on a non-file-backed attribute.
         // This is probably because we created a new (not read from a
-        // file) attribute and forgot to assign data to it.
+        // file) attribute and forgot to assign data to it. (this shouldn't
+        // actually ever happen)
         return omrx_error(omrx, OMRX_ERR_INTERNAL, "%s:%04x: Attempt to read from non-file-backed attribute!", attr->chunk->tag, attr->id);
     }
     CHECK_ERR(seek_to_pos(omrx, attr->file_pos));
@@ -469,15 +470,38 @@ static omrx_status_t chunk_add_attr(omrx_chunk_t chunk, omrx_attr_t attr) {
     return OMRX_OK;
 }
 
-static omrx_status_t add_child_chunk(omrx_chunk_t parent, omrx_chunk_t child) {
-    child->parent = parent;
-    if (!parent->first_child) {
+static omrx_status_t add_child_chunk(omrx_chunk_t parent, int index, omrx_chunk_t child) {
+    omrx_chunk_t chunk;
+    int i;
+
+    if (index < 0) {
+        if (!parent->first_child) {
+            parent->first_child = child;
+        }
+        if (parent->last_child) {
+            parent->last_child->next = child;
+        }
+        parent->last_child = child;
+    } elif (index == 0) {
+        child->next = parent->last_child;
         parent->first_child = child;
-        parent->last_child = child;
+        if (!parent->last_child) {
+            parent->last_child = child;
+        }
     } else {
-        parent->last_child->next = child;
-        parent->last_child = child;
+        chunk = parent->first_chunk;
+        for (i = 0; i < index - 1; i++) {
+            if (!chunk) break;
+            chunk = chunk->next;
+        }
+        if (!chunk) {
+            return omrx_error(parent->omrx, OMRX_ERR_BADIDX, "Attempt to insert %s chunk at index %d of %d", child->tag, index, i);
+        }
+        child->next = chunk->next;
+        chunk->next = child;
     }
+
+    child->parent = parent;
 
     return OMRX_OK;
 }
@@ -655,7 +679,7 @@ static omrx_status_t read_next_chunk(omrx_t omrx) {
             omrx->context = omrx->context->parent;
             CHECK_ERR(free_chunk(chunk));
         } else {
-            CHECK_ERR(add_child_chunk(omrx->context, chunk));
+            CHECK_ERR(add_child_chunk(omrx->context, -1, chunk));
         }
         if (!(tagint & END_CHUNK_FLAG)) {
             // This is a start tag.  Push a nesting level onto our context.
@@ -1303,14 +1327,14 @@ omrx_status_t omrx_get_parent(omrx_chunk_t chunk, omrx_chunk_t *result) {
     return API_RESULT(omrx, OMRX_STATUS_NOT_FOUND);
 }
 
-omrx_status_t omrx_add_chunk(omrx_chunk_t chunk, const char *tag, omrx_chunk_t *result) {
+omrx_status_t omrx_add_chunk(omrx_chunk_t chunk, int index, const char *tag, omrx_chunk_t *result) {
     if (!chunk) return OMRX_STATUS_NO_OBJECT;
 
     omrx_t omrx = chunk->omrx;
     omrx_chunk_t child = new_chunk(omrx, tag);
 
     CHECK_ALLOC(omrx, child);
-    CHECK_ERR(add_child_chunk(chunk, child));
+    CHECK_ERR(add_child_chunk(chunk, index, child));
     if (result) {
         *result = child;
     }
@@ -1565,10 +1589,12 @@ omrx_status_t omrx_get_attr_float32_array(omrx_chunk_t chunk, uint16_t id, uint1
     return API_RESULT(omrx, OMRX_OK);
 }
 
-omrx_status_t omrx_release_attr_data(omrx_chunk_t chunk, uint16_t id) {
+omrx_status_t omrx_release_attr_data(omrx_chunk_t chunk, uint16_t id, bool free_memory) {
     if (!chunk) return OMRX_STATUS_NO_OBJECT;
 
     omrx_t omrx = chunk->omrx;
+    CHECK_ERR(find_attr(chunk, id, &attr));
+
     //FIXME: implement this
     return API_RESULT(omrx, OMRX_OK);
 }
