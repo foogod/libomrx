@@ -114,7 +114,9 @@ typedef enum {
     OMRX_ERR_WRONG_CHUNK  = -12,
     
     /** An attempt was made to reference a chunk by index, but that index is out of range or otherwise invalid */
-    OMRX_ERR_BADIDX       = -13,
+    OMRX_ERR_BAD_INDEX    = -13,
+
+    OMRX_ERR_BAD_SIZE     = -14,
 
     /** Internal error (this indicates a bug somewhere inside libomrx) */
     OMRX_ERR_INTERNAL     = -500,

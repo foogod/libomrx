@@ -495,7 +495,7 @@ static omrx_status_t add_child_chunk(omrx_chunk_t parent, int index, omrx_chunk_
             chunk = chunk->next;
         }
         if (!chunk) {
-            return omrx_error(parent->omrx, OMRX_ERR_BADIDX, "Attempt to insert %s chunk at index %d of %d", child->tag, index, i);
+            return omrx_error(parent->omrx, OMRX_ERR_BAD_INDEX, "Attempt to insert %s chunk at index %d of %d", child->tag, index, i);
         }
         child->next = chunk->next;
         chunk->next = child;
@@ -1239,28 +1239,39 @@ omrx_status_t omrx_get_chunk_by_id(omrx_t omrx, const char *id, const char *tag,
     return API_RESULT(omrx, OMRX_OK);
 }
 
-omrx_status_t omrx_get_child(omrx_chunk_t chunk, const char *tag, omrx_chunk_t *result) {
-    if (!chunk) return OMRX_STATUS_NO_OBJECT;
+omrx_status_t omrx_get_child(omrx_chunk_t parent, const char *tag, int index, omrx_chunk_t *result) {
+    omrx_chunk_t chunk;
 
-    omrx_t omrx = chunk->omrx;
+    *result = NULL;
+    if (!parent) return OMRX_STATUS_NO_OBJECT;
+    omrx_t omrx = parent->omrx;
    
+    chunk = parent->first_child;
     if (tag) {
         uint32_t tagint = TAG_TO_TAGINT(tag);
 
-        chunk = chunk->first_child;
         while (chunk) {
             if (chunk->tagint == tagint) {
-                *result = chunk;
-                return API_RESULT(omrx, OMRX_OK);
+                break;
             }
             chunk = chunk->next;
         }
-    } else if (chunk->first_child) {
-        *result = chunk->first_child;
-        return API_RESULT(omrx, OMRX_OK);
     }
-    *result = NULL;
-    return API_RESULT(omrx, OMRX_STATUS_NOT_FOUND);
+    if (!chunk) {
+        return API_RESULT(omrx, OMRX_STATUS_NOT_FOUND);
+    }
+    if (index == -1) {
+        while (chunk) {
+            *result = chunk;
+            CHECK_ERR(omrx_get_next_chunk(chunk, tag, &chunk));
+        }
+    } else {
+        for (i = 0; i < index; i++) {
+            CHECK_OK(omrx_get_next_chunk(chunk, tag, &chunk));
+        }
+        *result = chunk;
+    }
+    return API_RESULT(omrx, OMRX_OK);
 }
 
 omrx_status_t omrx_get_next_chunk(omrx_chunk_t chunk, const char *tag, omrx_chunk_t *result) {
@@ -1369,7 +1380,7 @@ omrx_status_t omrx_set_attr_str(omrx_chunk_t chunk, uint16_t id, omrx_ownership_
     omrx_t omrx = chunk->omrx;
     omrx_attr_t attr = NULL;
 
-    //FIXME: check for OMRX_ATTR_ID and handle it specially
+    //FIXME: check for OMRX_ATTR_ID and handle it specially?
 
     CHECK_ERR(find_attr(chunk, id, &attr));
     if (!attr) {
@@ -1457,6 +1468,46 @@ omrx_status_t omrx_get_attr_raw(omrx_chunk_t chunk, uint16_t id, size_t *size, v
     CHECK_ERR(load_attr_data(attr, data));
     if (size) {
         *size = attr->size;
+    }
+
+    return API_RESULT(omrx, OMRX_OK);
+}
+
+omrx_status_t omrx_set_attr_raw(omrx_chunk_t chunk, uint16_t id, omrx_ownership_t own, struct omrx_attr_info *info, void *data) {
+    if (!chunk) return OMRX_STATUS_NO_OBJECT;
+
+    omrx_t omrx = chunk->omrx;
+    omrx_attr_t attr = NULL;
+    uint32_t elem_size;
+
+    elem_size = get_elem_size(info->raw_type, info->size);
+    if (!elem_size) elem_size = info->elem_size;
+    info->elem_size = elem_size;
+
+    if (!info->size) {
+        info->size = elem_size * info->rows * info->cols;
+    }
+    if (info->size % (info->elem_size * info->cols)) {
+        return omrx_error(omrx, OMRX_ERR_BAD_SIZE, "Attempt to set array data (%d) which is not a multiple of row size (%d)", info->size, elem_size * info->cols);
+    }
+    CHECK_ERR(find_attr(chunk, id, &attr));
+    if (!attr) {
+        attr = new_attr(chunk, id, info->raw_type, info->size, -1);
+        CHECK_ALLOC(omrx, attr);
+        CHECK_ERR(chunk_add_attr(chunk, attr));
+    }
+    //FIXME: add optional check for type matching existing (or matching type for id)?
+    if (attr->data) {
+        omrx->free(omrx, attr->data);
+    }
+    attr->size = info->size;
+    attr->cols = info->cols;
+    if (own == OMRX_COPY) {
+        attr->data = omrx->alloc(omrx, attr->size);
+        CHECK_ALLOC(omrx, attr->data);
+        memcpy(attr->data, data, attr->size);
+    } else {
+        attr->data = data;
     }
 
     return API_RESULT(omrx, OMRX_OK);
