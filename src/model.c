@@ -93,12 +93,29 @@ omrx_status_t omrx_model_get_lod_count(omrx_model_t model, int *result) {
     return API_RESULT(model_chunk->omrx, OMRX_OK);
 }
 
-omrx_status_t omrx_new_model(omrx_t omrx, int index, omrx_model_t *result) {
-    omrx_chunk_t model_chunk;
+omrx_status_t omrx_new_model(omrx_t omrx, const char *id, int index, omrx_model_t *result) {
+    omrx_status_t status;
+    omrx_chunk_t model_chunk, lod_chunk, mesh_chunk;
 
     *result = NULL;
-    CHECK_OK(omrx_add_chunk(omrx, index, "MoDL", &model_chunk));
-    return omrx_chunk_to_model(model_chunk, result);
+
+    do {
+        status = omrx_add_chunk(omrx, -1, "MesH", &mesh_chunk);
+        if (status != OMRX_OK) break;
+        status = omrx_set_attr_str(chunk, OMRX_ATTR_ID, id);
+        if (status != OMRX_OK) break;
+        //FIXME: make sure it's being inserted in the right place
+        status = omrx_add_chunk(omrx, index, "MoDL", &model_chunk);
+        if (status != OMRX_OK) break;
+        status = omrx_add_chunk(model_chunk, 0, "MLOd", &lod_chunk);
+        if (status != OMRX_OK) break;
+
+        return omrx_model_from_chunk(model_chunk, result);
+    } while (0);
+
+    omrx_del_chunk(mesh_chunk);
+    omrx_del_chunk(model_chunk);
+    return status;
 }
 
 omrx_status_t omrx_model_set_id(omrx_model_t model, const char *id) {
@@ -116,6 +133,24 @@ omrx_status_t omrx_model_set_name(omrx_model_t model, const char *name) {
     CHECK_OK(omrx_set_attr_str(chunk, OMRX_ATTR_NAME, name));
     return API_RESULT(chunk->omrx, OMRX_OK);
 }
+
+/*
+omrx_status_t omrx_set_model_description(omrx_model_t model, const char *desc) {
+    omrx_chunk_t chunk;
+
+    CHECK_OK(omrx_chunk_from_model(model, &chunk));
+    CHECK_OK(omrx_set_attr_str(chunk, OMRX_ATTR_DESCRIPTION, desc));
+    return API_RESULT(chunk->omrx, OMRX_OK);
+}
+
+omrx_status_t omrx_set_model_public(omrx_model_t model, const bool public) {
+    omrx_chunk_t chunk;
+
+    CHECK_OK(omrx_chunk_from_model(model, &chunk));
+    CHECK_OK(omrx_set_attr_bool(chunk, OMRX_ATTR_PUBLIC, public));
+    return API_RESULT(chunk->omrx, OMRX_OK);
+}
+*/
 
 omrx_status_t omrx_model_free(omrx_model_t model) {
     omrx_chunk_t chunk;
@@ -361,7 +396,7 @@ omrx_status_t omrx_mesh_get_vdata(omrx_mesh_t mesh, omrx_meshdata_type_t type, u
     return API_RESULT(mesh_chunk->omrx, OMRX_OK);
 }
 
-omrx_status_t omrx_mesh_get_polys(omrx_mesh_t mesh, struct omrx_polys *result) {
+omrx_status_t omrx_mesh_get_polys(omrx_mesh_t mesh, int index, struct omrx_polys *result) {
     omrx_chunk_t mesh_chunk, poly_chunk;
     struct omrx_attr_info attr_info;
 
@@ -371,7 +406,7 @@ omrx_status_t omrx_mesh_get_polys(omrx_mesh_t mesh, struct omrx_polys *result) {
     result->count = 0;
 
     CHECK_OK(omrx_mesh_to_chunk(mesh, &mesh_chunk));
-    CHECK_OK(omrx_get_child(mesh_chunk, "PoLy", 0, &poly_chunk));
+    CHECK_OK(omrx_get_child(mesh_chunk, "PoLy", index, &poly_chunk));
 
     CHECK_OK(omrx_get_attr_info(poly_chunk, ATTR_DATA, &attr_info));
     CHECK_OK(omrx_get_attr_raw(poly_chunk, ATTR_DATA, NULL, &result->data));
@@ -401,5 +436,24 @@ omrx_status_t omrx_mesh_set_polys(omrx_mesh_t mesh, struct omrx_polys *polys) {
     result->count = attr_info.rows * attr_info.cols;
 
     return API_RESULT(mesh_chunk->omrx, OMRX_OK);
+}
+
+omrx_status_t omrx_model_get_vdata(omrx_model_t model, omrx_meshdata_type_t type, unsigned index, struct omrx_meshdata *result) {
+    omrx_lod_t lod;
+    omrx_mesh_t mesh;
+
+    CHECK_OK(omrx_get_model_lod(model, &lod));
+    CHECK_OK(omrx_get_lod_mesh(lod, &mesh, NULL));
+    return omrx_get_mesh_vdata(mesh, type, index, result);
+}
+
+omrx_status_t omrx_model_get_polys(omrx_model_t model, struct omrx_polys *result) {
+    omrx_lod_t lod;
+    omrx_mesh_t mesh;
+    int polyset;
+
+    CHECK_OK(omrx_get_model_lod(model, &lod));
+    CHECK_OK(omrx_get_lod_mesh(lod, &mesh, &polyset));
+    return omrx_get_mesh_polys(mesh, type, polyset, result);
 }
 
