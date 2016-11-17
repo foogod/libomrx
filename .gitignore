@@ -2,9 +2,12 @@
 *.a
 *.so
 *.pyc
+*.fo
+*.pdf
 .swp
 .*.swp
 python/*.c
+spec/xsl/generated/
 
 # The following are byproducts of running cmake as an in-source build
 bin/
