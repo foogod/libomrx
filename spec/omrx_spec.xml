@@ -1,0 +1,1160 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE book [
+
+<!ENTITY VERSION "0.1" >
+<!ENTITY REVISION "0" >
+<!ENTITY PUBDATE "-NOT PUBLISHED-" >
+
+<!-- Convenient symbol entities -->
+<!ENTITY mdash            "&#x02014;" ><!--EM DASH -->
+<!ENTITY ndash            "&#x02013;" ><!--EN DASH -->
+
+<!-- Editing conveniences -->
+ <!ENTITY todo '<emphasis xmlns="http://docbook.org/ns/docbook" role="todo">TODO</emphasis>'>
+ <!ENTITY fixme '<emphasis xmlns="http://docbook.org/ns/docbook" role="fixme">FIXME</emphasis>'>
+
+<!-- Conformance terms -->
+ <!ENTITY may '<emphasis xmlns="http://docbook.org/ns/docbook" role="conformance-term">may</emphasis>'>
+ <!ENTITY optional '<emphasis xmlns="http://docbook.org/ns/docbook" role="conformance-term">optional</emphasis>'>
+ <!ENTITY should '<emphasis xmlns="http://docbook.org/ns/docbook" role="conformance-term">should</emphasis>'>
+ <!ENTITY shouldnot '<emphasis xmlns="http://docbook.org/ns/docbook" role="conformance-term">should not</emphasis>'>
+ <!ENTITY recommended '<emphasis xmlns="http://docbook.org/ns/docbook" role="conformance-term">recommended</emphasis>'>
+ <!ENTITY notrecommended '<emphasis xmlns="http://docbook.org/ns/docbook" role="conformance-term">not recommended</emphasis>'>
+ <!ENTITY must '<emphasis xmlns="http://docbook.org/ns/docbook" role="conformance-term">must</emphasis>'>
+ <!ENTITY mustnot '<emphasis xmlns="http://docbook.org/ns/docbook" role="conformance-term">must not</emphasis>'>
+ <!ENTITY required '<emphasis xmlns="http://docbook.org/ns/docbook" role="conformance-term">required</emphasis>'>
+
+ <!-- datatype terms -->
+ <!ENTITY byte    '<type xmlns="http://docbook.org/ns/docbook">byte</type>'>
+ <!ENTITY bytes   '<type xmlns="http://docbook.org/ns/docbook">byte</type>s'>
+ <!ENTITY uint8   '<type xmlns="http://docbook.org/ns/docbook">uint8</type>'>
+ <!ENTITY uint16  '<type xmlns="http://docbook.org/ns/docbook">uint16</type>'>
+ <!ENTITY uint32  '<type xmlns="http://docbook.org/ns/docbook">uint32</type>'>
+ <!ENTITY uint64  '<type xmlns="http://docbook.org/ns/docbook">uint64</type>'>
+ <!ENTITY int8    '<type xmlns="http://docbook.org/ns/docbook">int8</type>'>
+ <!ENTITY int16   '<type xmlns="http://docbook.org/ns/docbook">int16</type>'>
+ <!ENTITY int32   '<type xmlns="http://docbook.org/ns/docbook">int32</type>'>
+ <!ENTITY int64   '<type xmlns="http://docbook.org/ns/docbook">int64</type>'>
+ <!ENTITY float16 '<type xmlns="http://docbook.org/ns/docbook">float16</type>'>
+ <!ENTITY float32 '<type xmlns="http://docbook.org/ns/docbook">float32</type>'>
+ <!ENTITY float64 '<type xmlns="http://docbook.org/ns/docbook">float64</type>'>
+ <!ENTITY utf8    '<type xmlns="http://docbook.org/ns/docbook">utf8</type>'>
+]>
+
+<book xmlns="http://docbook.org/ns/docbook" version="5.0" xml:lang="en">
+
+ <info>
+  <title>OMRX Specification</title>
+  <subtitle>The Open Modelling and Rendering eXchange Format</subtitle>
+  <releaseinfo>Version &VERSION; revision &REVISION;</releaseinfo>
+  <pubdate>&PUBDATE;</pubdate>
+
+  <author>
+   <personname>Alex Stewart</personname>
+   <email>foogod@gmail.com</email>
+  </author>
+
+  <copyright>
+   <year>2016</year>
+   <holder>Alex Stewart</holder>
+  </copyright>
+  <legalnotice>
+   <para>This document is licensed under a <ulink url="http://creativecommons.org/licenses/by-nd/4.0">Creative Commons Attribution-NoDerivatives 4.0 International License</ulink>.  It may be reproduced in whole or in part so long as no modifications are made and appropriate attribution is provided.  If you wish to produce modified copies of this document, please contact the copyright holder for appropriate licensing terms.</para>
+  </legalnotice>
+ </info>
+
+ <chapter xml:id="introduction">
+  <title>Introduction</title>
+
+  <para>The Open Modelling and Rendering eXchange (OMRX) format is intended to provide a well-defined, full-featured, efficient, cross-platform and cross-application standard for storing and exchanging 3D modelling data and related resources.  In particular, OMRX has support for the following types of resource data:</para>
+
+  <itemizedlist spacing="compact">
+   <listitem>Mesh data (vertices, normals, polygons, arbitrary per-vertex data, etc)</listitem>
+   <listitem>Model data (multiple levels of detail, material associations and skinning, etc)</listitem>
+   <listitem>Textures and materials</listitem>
+   <listitem>Skeletons and animations</listitem>
+   <listitem>Scene data (lighting, background, instancing, atmospheric effects, etc)</listitem>
+  </itemizedlist>
+
+  <para>The OMRX Specification has been developed with a number of goals in mind.  Amongst these, OMRX has been specifically designed to be:</para>
+
+  <itemizedlist spacing="compact">
+   <listitem>Flexible and extensible</listitem>
+   <listitem>Unambiguous and well-defined</listitem>
+   <listitem>Efficient and straightforward to read and write</listitem>
+   <listitem>Space-efficient</listitem>
+  </itemizedlist>
+
+  <section xml:id="conformance-terms">
+   <title>Conformance Terms</title>
+
+   <para>There are several words and phrases used in this document which have specific meaning with regards to conformance with the specification:</para>
+
+   <variablelist>  
+    <varlistentry>
+     <term>&must;</term>
+     <listitem>This word, or the adjective "&required;", mean that the described behavior is an absolute requirement of the specification.  Implementations which do not follow these requirements are, by definition, not conformant.</listitem>
+    </varlistentry>
+
+    <varlistentry>
+     <term>&mustnot;</term>
+     <listitem>This phrase means that the described behavior is an absolute prohibition of the specification.  Implementations which exhibit the described behavior are, by definition, not conformant.</listitem>
+    </varlistentry>
+
+    <varlistentry>
+     <term>&should;</term>
+     <listitem>This word, or the adjective "&recommended;", mean that there may exist valid reasons in particular circumstances to ignore a particular item, but the full implications must be understood and carefully weighed before choosing a different course.  Implementations which do not follow these recommendations are still conformant with the specification, but may have undesirable limitations in some cases.</listitem>
+    </varlistentry>
+
+    <varlistentry>
+     <term>&shouldnot;</term>
+     <listitem>This phrase, or the phrase "&notrecommended;" mean that there may exist valid reasons in particular circumstances when the particular behavior is acceptable or even useful, but the full implications should be understood and the case carefully weighed before implementing any behavior described with this label.  Implementations which do exhibit the described behavior are still conformant with the specification, but may have undesirable limitations or side-effects in some cases.</listitem>
+    </varlistentry>
+
+    <varlistentry>
+     <term>&may;</term>
+     <listitem>This word, or the adjective "&optional;", mean that an item is truly optional. One implementor may choose to include the item because a particular application requires it or because the implementor feels that it enhances the implementation while another implementor may omit the same item. An implementation which does not include a particular option &must; be prepared to interoperate with another implementation which does include the option, though perhaps with reduced functionality. In the same vein an implementation which does include a particular option &must; be prepared to interoperate with another implementation which does not include the option (except, of course, for the feature the option provides.)</listitem>
+    </varlistentry>
+   </variablelist>
+
+  </section>
+
+  <section xml:id="definitions">
+   <title>Definitions</title>
+  </section>
+
+  <section xml:id="conventions">
+   <title>Conventions</title>
+
+   <para>The following conventions are used throughout this document:</para>
+
+   <itemizedlist>
+    <listitem>Bits are always numbered from 0, with the least significant bit being bit 0.</listitem>
+    <listitem>Bytes are always numbered from 0, with the first byte in a given sequence being byte 0.</listitem>
+    <listitem>Decimal numbers are represented with no special adornment or formatting.  Hexadecimal numbers are represented with the two-character prefix "0x" followed by a series of hex digits.</listitem>
+   </itemizedlist>
+
+  </section>
+
+  <section xml:id="versioning">
+   <title>Specification Versions</title>
+
+   <para>The OMRX Specification uses a two-part versioning scheme of the form "<emphasis>major</emphasis>.<emphasis>minor</emphasis>.  Changes to the specification which include material changes, deletions, or additions will always be accompanied by a new version number.</para>
+
+   <para>An increment to the minor version number indicates a backwards-compatible change to the specification, such as adding new ancillary chunks or attributes.  An increment to the major version number indicates a change which is incompatible in some way with previous versions of the specification.</para>
+
+   <para>In addition to the version, this specification document also has a "revision" number.  Changes to the revision of the documentation indicate changes to the documentation which do not change the details of the specification or implementations in any way, such as correcting typographical errors or changing or adding non-normative sections of the documentation (such as examples).  Different revisions of the same version should have no bearing on anyone attempting to implement the specification, except that later revisions may (hopefully) be easier to read or less confusing than earlier ones.</para>
+
+   <para>The OMRX datastream format includes the major and minor version of the OMRX specification on which it is based, such that decoders written to a particular version of the specification can determine whether a particular OMRX datastream is compatible, and to what degree.  Decoders which encounter an OMRX datastream with a supported major version, and a minor version equal to or less than the decoder's supported minor version, can expect to be able to fully read and interpret all elements of the OMRX datastream.</para>
+
+   <para>Decoders which encounter an OMRX datastream with a supported major version but a minor version greater than their supported minor version will still be able to correctly read and interpret all elements of the datastream supported by the decoder, but may not be able to take advantage of some features present in the datastream provided by the newer version of the specification.  (Implementations &may; choose to provide a warning to the user in this case that some features present in the datastream are not supported by the decoder.)</para>
+
+   <para>Decoders which encounter an OMRX datastream with an unrecognized major version &mustnot; attempt to interpret it further, as it may have differences which would lead to wrong interpretation of its contents under a different major version of the specification.  Decoders &may; support more than one major version of the specification at a time, but if they do so they &must; always interpret a given OMRX datastream consistently with the version of the specification indicated by its particular <property>omrx-version</property> attribute value.</para>
+
+  </section>
+
+  <section xml:id="datatypes">
+   <title>Elemental Datatypes and Encodings</title>
+
+   <para>A number of elemental datatypes are referenced repeatedly throughout this document.  All values and elements in an OMRX datastream are encoded as one of the following.</para>
+
+   <table>
+    <title>Elemental Datatypes</title>
+    <tgroup cols="2">
+     <colspec align="left" colwidth="4em"/>
+     <colspec align="left"/>
+     <thead>
+      <row>
+       <entry>Term</entry>
+       <entry>Meaning / Representation</entry>
+      </row>
+     </thead>
+     <tbody>
+      <row>
+       <entry>&byte;</entry>
+       <entry>An 8-bit byte (interpretation is context-dependent)</entry>
+      </row>
+      <row>
+       <entry>&uint8;</entry>
+       <entry>An unsigned 8-bit integer represented as a single byte</entry>
+      </row>
+      <row>
+       <entry>&uint16;</entry>
+       <entry>An unsigned 16-bit integer in little-endian form</entry>
+      </row>
+      <row>
+       <entry>&uint32;</entry>
+       <entry>An unsigned 32-bit integer in little-endian form</entry>
+      </row>
+      <row>
+       <entry>&uint64;</entry>
+       <entry>An unsigned 64-bit integer in little-endian form</entry>
+      </row>
+      <row>
+       <entry>&int8;</entry>
+       <entry>A signed 8-bit integer represented as a single byte</entry>
+      </row>
+      <row>
+       <entry>&int16;</entry>
+       <entry>A signed 16-bit integer in little-endian form</entry>
+      </row>
+      <row>
+       <entry>&int32;</entry>
+       <entry>A signed 32-bit integer in little-endian form</entry>
+      </row>
+      <row>
+       <entry>&int64;</entry>
+       <entry>A signed 64-bit integer in little-endian form</entry>
+      </row>
+      <row>
+       <entry>&float16;</entry>
+       <entry>A 16-bit floating point value using IEEE-754 binary16 representation, stored in little-endian form</entry>
+      </row>
+      <row>
+       <entry>&float32;</entry>
+       <entry>A 32-bit floating point value using IEEE-754 binary32 representation, stored in little-endian form</entry>
+      </row>
+      <row>
+       <entry>&float64;</entry>
+       <entry>A 64-bit floating point value using IEEE-754 binary64 representation, stored in little-endian form</entry>
+      </row>
+      <row>
+       <entry>&utf8;</entry>
+       <entry>A Unicode text string, represented in "Modified UTF-8" encoding (see below)</entry>
+      </row>
+     </tbody>
+    </tgroup>
+   </table>
+
+   <para>All multi-byte numeric values are stored in little-endian form, this means:
+    <itemizedlist>
+     <listitem>For integer forms, the first byte contains the least significant 8 bits (0-7) of the value, and each successive byte contains increasingly significant sets of 8 bits up to the last byte which contains the most significant 8 bits.</listitem>
+     <listitem>For floating-point values, the value is encoded in the appropriate IEEE-754 "binary" encoding, and then stored (as with integers) with the first byte containing the least significant 8 bits, and each successive byte containing increasingly significant sets of 8 bits up to the last byte, which contains the most significant 8 bits of the IEEE-754 representation (including sign and exponent bits).</listitem>
+    </itemizedlist>
+   </para>
+   <para>(Note that this convention is consistent with the default encoding and byte ordering of most modern 32- and 64-bit architectures for integer and floating point values)</para>
+
+   <para>All text strings in OMRX are encoded using "Modified UTF-8" encoding, defined as standard UTF-8 (RFC-3629) encoding with the exception that the U+0000 code point is encoded using the two byte sequence <literal>0xC0</literal> <literal>0x80</literal>.  Additionally, Unicode supplementary code points in the range U+10000 to U+10FFFF &may; be encoded either as the corresponding UTF-8 4-byte sequence (preferred), or as surrogate pairs encoded as two 3-byte UTF-8 sequences as described in CESU-8 (reading implementations &must; be able to support either encoding).</para>
+
+   <para>The Unicode <literal>ZERO WIDTH NO-BREAK SPACE</literal> code point (U+FEFF) &mustnot; be used as a "byte order mark" signature at the beginning of any &utf8; string.  If encountered in a string, this character &must; always be interpreted as the <literal>ZERO WIDTH NO-BREAK SPACE</literal> character, and not automatically skipped or removed, even if in the first position.</para>
+
+   <para>(The use of Modified UTF-8 encoding allows the representation of all valid Unicode code points while still reserving the null byte (<literal>0x00</literal>) for string termination and/or padding should it be useful for a particular application.  In particular, this also allows UTF-8 strings less than 4 bytes in length to be stored using the "compact" attribute storage class by padding the remaining bytes with <literal>0x00</literal> bytes)</para>
+
+  </section>
+
+  <section xml:id="normative-references">
+   <title>Normative References</title>
+
+   <para>The following normative documents contain provisions which, through reference in this text, also constitute provisions of this standard.  For dated references, only the specific edition(s) referenced here apply.  For undated references, the latest edition of the normative document referred to applies.</para>
+
+   &todo; review these:
+   <itemizedlist>
+    <listitem>ISO 639:1988, Code for the representation of names of languages.</listitem>
+    <listitem>ISO/IEC 646:1991, International Organization for Standardization, Information technology — ISO 7-bit coded character set for information interchange.</listitem>
+    <listitem>ISO/IEC 3309:1993, Information Technology — Telecommunications and information exchange between systems — High-level data link control (HDLC) procedures — Frame structure.</listitem>
+    <listitem>ISO/IEC 10646-1:1993/AMD.2, Information technology — Universal Multiple-Octet Coded Character Sets (UCS) — Part 1: Architecture and Basic Multilingual Plane.</listitem>
+    <listitem>RFC-1950, Deutsch, P. and Gailly, J-L., "ZLIB Compressed Data Format Specification version 3.3", RFC 1950, Aladdin Enterprises, May 1996.  http://www.ietf.org/rfc/rfc1950.txt</listitem>
+    <listitem>RFC-1951, Deutsch, P., "DEFLATE Compressed Data Format Specification version 1.3", RFC 1951, Aladdin Enterprises, May 1996.  http://www.ietf.org/rfc/rfc1951.txt</listitem>
+    <listitem>&todo; UTF-8 (RFC-3629)</listitem>
+    <listitem>&todo; CESU-8</listitem>
+   </itemizedlist>
+  </section>
+
+ </chapter>
+
+ <chapter xml:id="logical-structure">
+  <title>Logical Structure</title>
+
+  <para>&fixme; Rewrite this.</para>
+
+  <para>The chunks within an OMRX datastream represent a logical tree structure.  Each chunk may have zero or more "child" chunks, depending on its type.  Within the datastream format, this is represented using "begin" and "end" chunks.</para>
+
+  <para>There are two general categories of chunks:  Those which support children and those which do not.  If a chunk does not support children, its chunk tag will have its <structfield>begin/end</structfield> bit set to "end" (1).  For these chunks, there is no corresponding begin chunk or tag.</para>
+
+  <para>If a chunk does support children, its <structfield>begin/end</structfield> flag will be set to "begin" (0).  Such chunks are always accompanied in the datastream by a matching "end" chunk (that is, a chunk with the same tag as the "begin" chunk, except that the <structfield>begin/end</structfield> flag has a value of "end" (1) instead).</para>
+
+  <para>If a begin chunk is encountered, then it is considered to be a "parent" chunk, and all of the immediately following chunks are its children, until the matching end chunk is encountered.</para>
+
+  <para>Parent/child relationships can be nested, such that a child chunk may itself be a parent to other chunks.  A conforming reading implementation is expected to be able to keep track of multiple levels of such nesting.</para>
+
+  <para>All begin chunks must have a matching end chunk, and end chunks must be present in a correct "LIFO stack" order (that is, when reading, the end chunk for the most recently encountered (unterminated) begin chunk must always be encountered before any end chunks for any previous begin chunks).</para>
+
+  <para>End chunks corresponding to previous begin chunks should not have any attributes.</para>
+
+ </chapter>
+
+ <chapter xml:id="datastream-format">
+  <title>Datastream Format</title>
+
+  <para>An OMRX datastream consists of a series of chunks.  Each chunk contains:
+   <itemizedlist spacing="compact">
+    <listitem>A chunk header</listitem>
+    <listitem>zero or more attributes</listitem>
+    <listitem>A chunk footer (CRC)</listitem>
+   </itemizedlist>
+  </para>
+
+  <para>Each attribute, in turn, contains:
+   <itemizedlist spacing="compact">
+    <listitem>An attribute header</listitem>
+    <listitem>zero or more bytes of additional payload data</listitem>
+   </itemizedlist>
+  </para>
+
+  <note>Attribute payloads can be any number of bytes up to the maximum, and there is no padding between attributes or chunks; therefore, implementors cannot assume that chunk or attribute headers will be aligned on any boundaries larger than bytes.</note>
+
+  <section xml:id="chunk-header">
+   <title>Chunk Header</title>
+
+   <para>The chunk header identifies the type of chunk and the number of attributes which follow.</para>
+
+   <table>
+    <title>Chunk Header</title>
+    <tgroup cols="3">
+     <colspec align="center" colwidth="7em"/>
+     <colspec align="center" colwidth="5em"/>
+     <colspec align="left"/>
+     <thead>
+      <row>
+       <entry>Length (bytes)</entry>
+       <entry>Encoding</entry>
+       <entry>Field Name</entry>
+      </row>
+     </thead>
+     <tbody>
+      <row>
+       <entry>4</entry> <entry>&bytes;</entry> <entry>tag</entry>
+      </row>
+      <row>
+       <entry>2</entry> <entry>&uint16;</entry> <entry>attribute-count</entry>
+      </row>
+     </tbody>
+    </tgroup>
+   </table>
+
+   <para>The <structfield>tag</structfield> field indicates the type of chunk which follows.  See <xref linkend="chunk-tags"/> for more information on the chunk tag format and conventions.</para>
+   <para>The <structfield>attribute-count</structfield> field contains a &uint16; number, indicating the number of attributes which immediately follow this chunk header (zero is also a valid number of attributes, and indicates that the next chunk's header immediately follows this chunk's header).</para>
+  </section>
+
+
+  <section xml:id="attribute-header">
+   <title>Attribute Header</title>
+
+   <para>After the chunk header, <structfield>attribute-count</structfield> attributes follow.  Each attribute consists of an attribute header, followed by zero or more additional bytes of attribute payload data.</para>
+
+   <table>
+    <title>Attribute Header</title>
+    <tgroup cols="3">
+     <colspec align="center" colwidth="7em"/>
+     <colspec align="center" colwidth="5em"/>
+     <colspec align="left"/>
+     <thead>
+      <row>
+       <entry>Length (bytes)</entry>
+       <entry>Encoding</entry>
+       <entry>Field Name</entry>
+      </row>
+     </thead>
+     <tbody>
+      <row>
+       <entry>2</entry> <entry>&uint16;</entry> <entry>id</entry>
+      </row>
+      <row>
+       <entry>2</entry> <entry>&uint16;</entry> <entry>flags</entry>
+      </row>
+      <row>
+       <entry>4</entry> <entry>(varies)</entry> <entry>payload/size</entry>
+      </row>
+     </tbody>
+    </tgroup>
+   </table>
+
+   <para>The <structfield>id</structfield> field indicates which of the chunk's attributes this header represents, as a &uint16; number.  See <xref linkend="attribute-ids"/> for more information on attribute ID numbers.</para>
+
+    <para>The <structfield>flags</structfield> field contains information about the datatype of the associated payload, as well as how it is stored:</para>
+
+    <table>
+     <title>Attribute flags field</title>
+     <tgroup cols="16" align="center">
+      <colspec colname="bit15"/>
+      <colspec colname="bit14"/>
+      <colspec colname="bit13"/>
+      <colspec colname="bit12"/>
+      <colspec colname="bit11"/>
+      <colspec colname="bit10"/>
+      <colspec colname="bit9" />
+      <colspec colname="bit8" />
+      <colspec colname="bit7" />
+      <colspec colname="bit6" />
+      <colspec colname="bit5" />
+      <colspec colname="bit4" />
+      <colspec colname="bit3" />
+      <colspec colname="bit2" />
+      <colspec colname="bit1" />
+      <colspec colname="bit0" />
+      <thead>
+       <row>
+        <entry>15</entry>
+        <entry>14</entry>
+        <entry>13</entry>
+        <entry>12</entry>
+        <entry>11</entry>
+        <entry>10</entry>
+        <entry>9</entry>
+        <entry>8</entry>
+        <entry>7</entry>
+        <entry>6</entry>
+        <entry>5</entry>
+        <entry>4</entry>
+        <entry>3</entry>
+        <entry>2</entry>
+        <entry>1</entry>
+        <entry>0</entry>
+       </row>
+      </thead>
+      <tbody>
+       <row>
+        <entry namest="bit15" nameend="bit14">storage</entry>
+        <entry namest="bit13" nameend="bit8"><emphasis>(reserved)</emphasis></entry>
+        <entry namest="bit7" nameend="bit0">datatype</entry>
+       </row>
+      </tbody>
+     </tgroup>
+    </table>
+
+    <para>Possible values for the <structfield>storage</structfield> bits are as follows:</para>
+
+    <table>
+     <title>Storage Classes</title>
+     <tgroup cols="3">
+      <colspec align="center" colwidth="3em"/>
+      <colspec align="center" colwidth="6.5em"/>
+      <colspec align="left"/>
+      <thead>
+       <row>
+        <entry>Bits</entry>
+        <entry>Meaning</entry>
+        <entry>Description</entry>
+       </row>
+      </thead>
+      <tbody>
+       <row>
+        <entry>0 0</entry> <entry>compact</entry> <entry>The payload is entirely contained within the <structfield>payload/size</structfield> field.  No additional data follows the attribute header.</entry>
+       </row>
+       <row>
+        <entry>0 1</entry> <entry>extended</entry> <entry>The payload follows the header.  The number of payload bytes following the header is contained in the <structfield>payload/size</structfield> field as a &uint32; value.</entry>
+       </row>
+       <row>
+        <entry>1 0</entry> <entry>compressed</entry> <entry>The payload follows the header in a compressed form.  The number of bytes of compressed data following the header is contained in the <structfield>payload/size</structfield> field (as a &uint32; value).</entry>
+       </row>
+       <row>
+        <entry>1 1</entry> <entry><emphasis>(reserved)</emphasis></entry> <entry>The payload (if any) follows the header, but the interpretation of the payload data is not defined by the current version of this spec.  The <structfield>payload/size</structfield> field, however, does contain the number of bytes following the header which can be skipped to find the start of the next attribute.</entry>
+       </row>
+      </tbody>
+     </tgroup>
+    </table>
+
+    <para>The interpretation of the <structfield>payload/size</structfield> field and the data following the attribute header depends on the <structfield>storage</structfield> bits of the <structfield>flags</structfield> field:</para>
+
+    <itemizedlist>
+     <listitem>If the storage class of the attribute is "compact", then the <structfield>payload/size</structfield> field contains the payload data itself, and should be interpreted according to the <structfield>datatype</structfield> (as 4 bytes of payload data).</listitem>
+     <listitem>If the storage class of the attribute is anything other than "compact", then the <structfield>payload/size</structfield> field should be interpreted as a &uint32; value, and contains the number of bytes of payload data which follows the attribute header.</listitem>
+    </itemizedlist>
+
+  </section>
+
+  <section xml:id="chunk-footer">
+   <title>Chunk Footer</title>
+
+   <para>The chunk footer follows immediately after the last attribute, and consists of a single &uint32; value.  This value is a CRC checksum of all of the bytes constituting the chunk in the datastream, including the chunk header and all attributes (but, obviously, not including the chunk footer itself).</para>
+
+   &todo; Describe CRC algorithm details
+
+  </section>
+
+  <section xml:id="compression">
+   <title>Compression</title>
+
+   <para>When an attribute has a storage class of "compressed", the data follows the attribute header in a compressed form.  The form of this compressed data depends on the compression method used.</para>
+
+   <para>All forms of compressed attribute data &must; start with a single <structfield>method identification</structfield> byte indicating the type of compressed data which follows.  Compression methods 0x00 to 0x7F are reserved for official methods defined by the OMRX specification.  Method numbers from 0x80 to 0xFF may be used for nonstandard extensions to this specification.</para>
+
+   <section>
+    <title>Method 0: Zlib Deflate</title>
+
+    <para>When using this method, the initial <structfield>method identification</structfield> byte &must; be <literal>0x00</literal>.  The remainder of the attribute data is interpreted as a zlib-format compressed datastream using the deflate/inflate compression method, with a sliding window of at most 32768 bytes.</para>
+
+    <para>The zlib format has the following structure (which immediately follows the initial <structfield>method identification</structfield> byte):</para>
+
+    <table>
+     <title>Zlib Datastream Format</title>
+     <tgroup cols="2">
+      <colspec align="center" colwidth="7em"/>
+      <colspec align="left"/>
+      <thead>
+       <row>
+        <entry>Length (bytes)</entry>
+        <entry>Description</entry>
+       </row>
+      </thead>
+      <tbody>
+       <row>
+        <entry>1</entry> <entry>zlib method/info</entry>
+       </row>
+       <row>
+        <entry>1</entry> <entry>zlib flags</entry>
+       </row>
+       <row>
+        <entry>(varies)</entry> <entry>compressed data</entry>
+       </row>
+       <row>
+        <entry>4</entry> <entry>Adler32 check value</entry>
+       </row>
+      </tbody>
+     </tgroup>
+    </table>
+
+    <para>Further details on this format are given in the zlib specification [RFC-1950].</para>
+
+    <para>For OMRX compression method 0, the <structfield>zlib method/info</structfield> field &must; specify method code 8 (deflate compression) and a window size of not more than 32768 bytes.  As this specification does not define any preset dictionaries for zlib compression, the <structfield>zlib flags</structfield> &mustnot; have the "preset dictionary" flag set.</para>
+
+    <para>If the data to be compressed has an uncompressed length of 16384 bytes or fewer, the encoder &should; set a smaller window size by rounding up to the closest power of 2. This decreases the memory required for both encoding and decoding, without adversely affecting the compression ratio.</para>
+
+    <para>The <structfield>compressed data</structfield> portion consists of a series of compressed data blocks, according to the specifications of the zlib format [RFC-1950] and the "deflate" algorithm [RFC-1951].</para>
+
+    <para>The <structfield>Adler32 check value</structfield> stored at the end of the zlib datastream is calculated on the uncompressed data as per the zlib format (note that the algorithm used to calculate this is not the same as the CRC calculation used for chunk verification). The zlib check value is useful mainly as a cross-check that the deflate and inflate algorithms are implemented correctly. Verifying the individual OMRX chunk CRCs provides confidence that the OMRX datastream has been transmitted undamaged, and checking the zlib check value should not be necessary for this purpose.</para>
+   </section>
+
+  </section>
+
+  <section xml:id="ordering-requirements">
+   <title>Ordering Requirements</title>
+
+   &todo;
+
+  </section>
+ </chapter>
+
+ <chapter xml:id="data-elements">
+  <title>Data Elements</title>
+
+  <section xml:id="chunk-tags">
+   <title>Chunk Tags</title>
+   <para>Chunk tags consist of four bytes, each of which is in the range 0x40 - 0x7f (that is, bit 7 must be 0 and bit 6 must be 1).  Additionally, bit 5 (0x20) of each byte has special meaning as described below.</para>
+
+   <para>These requirements are such that each of the four bytes will also be a printable ASCII character.  As such, OMRX chunk tags are typically represented in this documentation as four-character text strings, for convenience and mnemonic value.  However, encoders and decoders &must; treat chunk tags as binary data, not text character strings.  For example, it would not be correct to represent a chunk tag with the equivalent characters using a different character set.  Likewise, text-processing or matching routines may produce incorrect results if used to manipulate chunk tags.</para>
+
+   <para>Additionally, chunk tags are also assigned such that a decoder can determine some useful properties, even when the chunk type itself is not recognized.  To this end, four bits of the chunk tag, specifically bit 5 of each byte, have special meaning as "property bits".</para>
+   <para>The choice of bit 5 of each byte means that humans, reading a tag as ASCII characters, can easily determine the value of each property bit by whether each character is uppercase (bit=0) or lowercase (bit=1); however, encoders and decoders &must; treat tags as binary data, not text, and &should; test these properties by numerically checking the appropriate bits (in particular, using text-based methods or routines to test these properties may produce incorrect results if a locale-specific definition of upper/lower case is used).</para>
+
+   <table>
+    <title>Chunk Property Bits</title>
+    <tgroup cols="2">
+     <colspec align="center" colwidth="3em"/>
+     <colspec align="left"/>
+     <thead>
+      <row>
+       <entry>Byte</entry>
+       <entry>Meaning of Bit 5</entry>
+      </row>
+     </thead>
+     <tbody>
+      <row>
+       <entry>0</entry>
+       <entry>
+        <segmentedlist>
+         <segtitle>0</segtitle><segtitle>1</segtitle>
+         <seglistitem>
+          <seg>Official &mdash; This chunk type is defined by the OMRX Specification.</seg>
+          <seg>Extension &mdash; This chunk type is an unofficial extension to OMRX not defined by the specification.</seg>
+         </seglistitem>
+        </segmentedlist>
+       </entry>
+      </row>
+      <row>
+       <entry>1</entry>
+       <entry>
+        <segmentedlist>
+         <segtitle>0</segtitle><segtitle>1</segtitle>
+         <seglistitem>
+          <seg>Essential &mdash; Proper interpretation of this chunk is required to properly interpret/render its parent chunk or siblings.</seg>
+          <seg>Ancillary &mdash; Ignoring this chunk will not significantly change the interpretation or rendering of other chunks.</seg>
+         </seglistitem>
+        </segmentedlist>
+       </entry>
+      </row>
+      <row>
+       <entry>2</entry>
+       <entry>
+        <segmentedlist>
+         <segtitle>0</segtitle><segtitle>1</segtitle>
+         <seglistitem>
+          <seg>No-Copy &mdash; The meaning of this chunk depends on its parent or siblings.  If this chunk is not fully understood, and changes are made to parent or sibling chunks, this chunk &mustnot; be included in the output.</seg>
+          <seg>Copy-OK &mdash; The meaning of this chunk is independent of other chunks, and it &may; be retained verbatim regardless of any changes made to other chunks.</seg>
+         </seglistitem>
+        </segmentedlist>
+       </entry>
+      </row>
+      <row>
+       <entry>3</entry>
+       <entry>
+        <segmentedlist>
+         <segtitle>0</segtitle><segtitle>1</segtitle>
+         <seglistitem>
+          <seg>Begin &mdash; This chunk is a parent chunk.  A corresponding end chunk (with a matching chunk tag except this bit is set to 1) will follow later in the datastream.  All following chunks, up to the corresponding end chunk, should be considered children of this chunk.</seg>
+          <seg>End &mdash; This chunk indicates the end of a previous (matching) "begin" chunk, or it is a chunk type that does not support children.</seg>
+         </seglistitem>
+        </segmentedlist>
+       </entry>
+      </row>
+     </tbody>
+    </tgroup>
+   </table>
+
+   <para>Note that these property bits are an inherent part of each chunk tag, and thus each chunk type, and changing any of the property bits results in a completely different chunk type.  Thus, for example, the hypothetical "CHNK" and "ChnK" tags would represent two completely different chunk types, not the same type with different properties.</para>
+
+   <para>An implementation &may; include chunks in an OMRX datastream with tags which are not defined by this specification, but if such chunks are present, their chunk tag &must; have the "extension" property (that is, bit 5 of the first byte must be set to 1).  This allows user-defined or implementation-specific extensions to the OMRX format for testing or specialized applications without risking conflicts with current or future official chunk tags.</para>
+
+   <para>A reading implementation which encounters an unknown (or not fully understood) chunk with the "essential" property &must; consider its parent chunk to also not be fully understood, and act accordingly.  Note that this also implies that if the parent chunk has the "essential" property, its parent must also be considered not fully understood, and so on.</para>
+
+   <para>A reading implementation which attempts to interpret a chunk which is not fully understood &should; either abort the operation or produce an appropriate user warning that the results it produces may not be rendered correctly.  An implementation &may; ignore an essential chunk it does not understand only if it uses no information from its parent or sibling chunks to perform the desired operation.  If an implementation encounters an unknown essential chunk at the top level, it &must; consider the entire datastream to be not understood and behave accordingly.</para>
+
+   <para>If an implementation which makes changes to an OMRX datastream encounters an unknown chunk with the "no-copy" attribute:
+    <itemizedlist>
+     <listitem>If no changes have been made to the chunk's parent chunk or any of its parent's descendants, the unknown chunk &may; still be included verbatim in the output (such that the entirety of the parent and its descendent tree is preserved verbatim).</listitem>
+     <listitem>If changes are made to the chunk's parent or any of its parent's descendents, including adding or removing other chunks, the "no-copy" chunk &mustnot; be included in the output.</listitem>
+    </itemizedlist>
+   </para>
+   
+   <para>An unknown chunk with the "copy-ok" property &may; be preserved verbatim even if its parent or sibling chunks are modified, but &shouldnot; be modified in any way itself if its chunk type is not understood.</para>
+
+   <para>For every chunk type defined as a "begin" chunk, there is also a corresponding implicit definition of the corresponding "end" chunk tag.  This "end" chunk is a completely separate chunk type, whose only purpose is to indicate the end of the parent-child relationship in the datastream.  In particular, any attributes defined for the "begin" chunk are not valid in the corresponding "end" chunk (and implicit "end" chunks in general do not have any defined attributes).</para>
+
+   <para>Chunks which do not support children are defined with an "end" tag as their primary tag.  For such chunks, there is no corresponding "begin" tag defined.</para>
+
+  </section>
+
+  <section xml:id="attribute-ids">
+   <title>Attribute IDs</title>
+
+   <para>Attribute IDs are defined as 16-bit unsigned numbers.  There are two general categories of attributes: global attributes and local attributes.  Global attributes can apply to any chunk type, whereas local attributes are only defined for a specific type of chunk.</para>
+
+   <para>For global attributes, the defined ID is reserved for all chunk types and always indicates the same attribute name and properties for every chunk type.  Attribute IDs for local attributes, however, may be reused for different chunk types, and the same ID may refer to a completely different attribute name, properties, and meaning within a different chunk type.  Global attributes are defined in <xref linkend="global-attrs"/>.  Local attributes for each chunk type are defined as part of the chunk type definition under <xref linkend="chunk-types"/>.</para>
+
+   <para>Similar to chunk tags, each attribute ID posesses several properties which can be useful for implementations which do not recognize a particular attribute.  These properties are encoded in the top bit of each nybble (hex digit) of the ID value:</para>
+
+   <table>
+    <title>Attribute ID Format</title>
+    <tgroup cols="16" align="center">
+     <colspec colname="bit15"/>
+     <colspec colname="bit14" colwidth="1.7em"/>
+     <colspec colname="bit13" colwidth="1.7em"/>
+     <colspec colname="bit12" colwidth="1.7em"/>
+     <colspec colname="bit11"/>
+     <colspec colname="bit10" colwidth="1.7em"/>
+     <colspec colname="bit9"  colwidth="1.7em"/>
+     <colspec colname="bit8"  colwidth="1.7em"/>
+     <colspec colname="bit7" />
+     <colspec colname="bit6"  colwidth="1.7em"/>
+     <colspec colname="bit5"  colwidth="1.7em"/>
+     <colspec colname="bit4"  colwidth="1.7em"/>
+     <colspec colname="bit3" />
+     <colspec colname="bit2"  colwidth="1.7em"/>
+     <colspec colname="bit1"  colwidth="1.7em"/>
+     <colspec colname="bit0"  colwidth="1.7em"/>
+     <thead>
+      <row>
+       <entry>15</entry>
+       <entry>14</entry>
+       <entry>13</entry>
+       <entry>12</entry>
+       <entry>11</entry>
+       <entry>10</entry>
+       <entry>9</entry>
+       <entry>8</entry>
+       <entry>7</entry>
+       <entry>6</entry>
+       <entry>5</entry>
+       <entry>4</entry>
+       <entry>3</entry>
+       <entry>2</entry>
+       <entry>1</entry>
+       <entry>0</entry>
+      </row>
+     </thead>
+     <tbody>
+      <row>
+       <entry namest="bit15" nameend="bit15">extension</entry>
+       <entry namest="bit14" nameend="bit12">...</entry>
+       <entry namest="bit11" nameend="bit11">ancillary</entry>
+       <entry namest="bit10" nameend="bit8">...</entry>
+       <entry namest="bit7" nameend="bit7">copy-ok</entry>
+       <entry namest="bit6" nameend="bit4">...</entry>
+       <entry namest="bit3" nameend="bit3">local</entry>
+       <entry namest="bit2" nameend="bit0">...</entry>
+      </row>
+     </tbody>
+    </tgroup>
+   </table>
+
+   <table>
+    <title>Attribute Property Bits</title>
+    <tgroup cols="2">
+     <colspec align="center" colwidth="30pt"/>
+     <colspec align="left"/>
+     <thead>
+      <row>
+       <entry>Bit</entry>
+       <entry>Meaning</entry>
+      </row>
+     </thead>
+     <tbody>
+      <row>
+       <entry>15</entry>
+       <entry>
+        <segmentedlist>
+         <segtitle>0</segtitle><segtitle>1</segtitle>
+         <seglistitem>
+          <seg>Official &mdash; This attribute type is defined by the OMRX Specification.</seg>
+          <seg>Extension &mdash; This attribute type is an unofficial extension to OMRX not defined by the specification.</seg>
+         </seglistitem>
+        </segmentedlist>
+       </entry>
+      </row>
+      <row>
+       <entry>11</entry>
+       <entry>
+        <segmentedlist>
+         <segtitle>0</segtitle><segtitle>1</segtitle>
+         <seglistitem>
+          <seg>Essential &mdash; Proper interpretation of this attribute is required to properly interpret/render the chunk or other attributes within the chunk which contains it.</seg>
+          <seg>Ancillary &mdash; Ignoring this attribute will not significantly change the interpretation of the chunk or its other attributes.</seg>
+         </seglistitem>
+        </segmentedlist>
+       </entry>
+      </row>
+      <row>
+       <entry>7</entry>
+       <entry>
+        <segmentedlist>
+         <segtitle>0</segtitle><segtitle>1</segtitle>
+         <seglistitem>
+          <seg>No-Copy &mdash; The meaning of this attribute depends on other attributes of this chunk or the chunk's children.  If this attribute is not understood, and changes are made to this chunk or its children, this attribute &mustnot; be included in the output.</seg>
+          <seg>Copy-OK &mdash; The meaning of this attribute is independent of other attributes or chunks, and it &may; be retained verbatim regardless of any changes made to other attributes or chunks.</seg>
+         </seglistitem>
+        </segmentedlist>
+       </entry>
+      </row>
+      <row>
+       <entry>3</entry>
+       <entry>
+        <segmentedlist>
+         <segtitle>0</segtitle><segtitle>1</segtitle>
+         <seglistitem>
+          <seg>Global &mdash; This attribute ID always represents the same attribute, regardless of what chunk it's contained in.</seg>
+          <seg>Local &mdash; The meaning of this attribute ID is specific to this chunk type.  The same ID in different chunks may refer to completely different attributes.</seg>
+         </seglistitem>
+        </segmentedlist>
+       </entry>
+      </row>
+     </tbody>
+    </tgroup>
+   </table>
+
+   <para>Note that, as with chunk properties, these property bits are an inherent part of each attribute ID, and thus each attribute type, and changing any of the property bits results in a completely different attribute.  Thus, for example, the attribute IDs 0x0000 and 0x0880 would represent two completely different attributes, not the same attribute with different properties.</para>
+
+  </section>
+
+  <section xml:id="datatype-codes">
+   <title>Datatype Codes</title>
+
+   &todo;
+
+  </section>
+
+  <section xml:id="text-keywords">
+   <title>Text chunk keywords</title>
+
+   &todo;
+   <table>
+    <title>Defined Text chunk keywords</title>
+    <tgroup cols="2">
+     <colspec align="left" colwidth="6.5em"/>
+     <colspec align="left"/>
+     <thead>
+      <row>
+       <entry>Keyword</entry>
+       <entry>Meaning</entry>
+      </row>
+     </thead>
+     <tbody>
+      <row>
+       <entry>Author</entry>
+       <entry>The name of the person who authored this content</entry>
+      </row>
+      <row>
+       <entry>Packager</entry>
+       <entry>The name of the person who created the OMRX representation of this content</entry>
+      </row>
+      <row>
+       <entry>Description</entry>
+       <entry>Detailed description</entry>
+      </row>
+      <row>
+       <entry>Copyright</entry>
+       <entry>A human-readable message indicating the copyright status and holder for the content (for example, "Copyright 2016 John Doe, all rights reserved")</entry>
+      </row>
+      <row>
+       <entry>License</entry>
+       <entry>Name of the license under which this content is made available (for example, "Creative Commons Attribution-NonCommercial 4.0")</entry>
+      </row>
+      <row>
+       <entry>License Text</entry>
+       <entry>Full text of the licensing agreement under which this content is made available.  (This is not generally needed if there is a "License" entry with a well-known license name, but may be useful/required if nonstandard licensing terms apply, etc.  Obviously, this text may be fairly long.)</entry>
+      </row>
+      <row>
+       <entry>License URL</entry>
+       <entry>URL of a location where details of the licensing agreement for this content can be found.</entry>
+      </row>
+      <row>
+       <entry>Software</entry>
+       <entry>The software which was used to create the content</entry>
+      </row>
+      <row>
+       <entry>Source</entry>
+       <entry>Information about the source data or other original content from which this was created</entry>
+      </row>
+      <row>
+       <entry>Comment</entry>
+       <entry>Miscellaneous additional comments</entry>
+      </row>
+     </tbody>
+    </tgroup>
+   </table>
+
+   <para>To facilitate comparisons, keywords &must; only use characters in the Unicode Basic Multilingual Plane (U+0000 - U+FFFF), and must not use surrogate pairs.  (This restriction ensures that there is always exactly one binary &utf8; representation for any keyword, and thus testing for equality can be performed with a simple binary comparison of the &utf8; representations, without needing to do any UTF decoding or interpretation.)</para>
+
+   <para>Keywords beginning with an upper-case ASCII character (U+0041 - U+005A) are reserved for official keywords defined by the OMRX specification.  Keywords not defined in this specification &may; also be used, but &mustnot; start with a character in this range.</para>
+
+   <para>Text keywords &must; be at least one character in length.  There is no maximum but it is &recommended; that they be kept reasonably short.  To reduce the likelihood for confusion when viewed by humans, implementors &should; avoid the use of non-printing characters or unicode space characters other than <literal>SPACE</literal> (U+0020) in keyword identifiers.</para>
+
+  </section>
+
+ </chapter>
+
+ <chapter xml:id="reference">
+  <title>Chunk and Attribute Reference</title>
+
+  <section xml:id="global-attrs">
+   <title>Global Attributes</title>
+
+   &todo;
+
+  </section>
+
+  <section xml:id="chunk-types">
+   <title>Chunk Types</title>
+
+   <!-- ================================================================== -->
+   <section xml:id="chunk.OMRX">
+    <title>OMRX</title>
+
+    <variablelist spacing="compact">
+     <varlistentry><term>Tag</term><listitem><classname>OMRX</classname></listitem></varlistentry>
+     <varlistentry><term>Properties</term>
+      <listitem><simplelist type="inline">
+        <member>Essential</member>
+        <member>No-Copy</member>
+        <member>Has-Children</member>
+      </simplelist></listitem>
+     </varlistentry>
+     <varlistentry><term>Parents</term><listitem>(none)</listitem></varlistentry>
+     <varlistentry><term>Children</term>
+      <listitem><simplelist type="inline">
+        <member><classname>Text</classname></member>
+        <member><classname>ScNE</classname></member>
+        <member><classname>MoDL</classname></member>
+        <member><classname>MeSH</classname></member>
+        <member><classname>MaTL</classname></member>
+      </simplelist></listitem>
+     </varlistentry>
+    </variablelist>
+
+    <section>
+     <title>Global Attributes</title>
+     <informaltable>
+      <tgroup cols="3">
+       <colspec align="left" colwidth="7em"/>
+       <colspec align="center" colwidth="5em"/>
+       <colspec align="left"/>
+       <thead>
+        <row>
+         <entry align="center">Name</entry>
+         <entry>Status</entry>
+         <entry>Meaning</entry>
+        </row>
+       </thead>
+       <tbody>
+        <row>
+         <entry>omrx-version</entry>
+         <entry>&required;</entry>
+         <entry>The version of the OMRX specification which this datastream was written to be in conformance with.</entry>
+        </row>
+        <row>
+         <entry>name</entry>
+         <entry>&optional;</entry>
+         <entry>A name for this particular OMRX datastream.  This may be the same as the filename, or a portion of it, as appropriate, but is not required to be.</entry>
+        </row>
+       </tbody>
+      </tgroup>
+     </informaltable>
+    </section>
+
+    <section>
+     <title>Local Attributes</title>
+     <informaltable>
+      <tgroup cols="5">
+       <colspec align="center" colwidth="4em"/>
+       <colspec align="left" colwidth="6em"/>
+       <colspec align="center" colwidth="5em"/>
+       <colspec align="center" colwidth="5.1em"/>
+       <colspec align="left"/>
+       <thead>
+        <row>
+         <entry>ID</entry>
+         <entry align="center">Name</entry>
+         <entry>Status</entry>
+         <entry>Datatype</entry>
+         <entry>Meaning</entry>
+        </row>
+       </thead>
+       <tbody>
+        <row>
+         <entry>0x____</entry>
+         <entry>encoder</entry>
+         <entry>&optional;</entry>
+         <entry>&utf8;</entry>
+         <entry>A text string describing the particular implementation (application, library, etc) which wrote this OMRX datastream.</entry>
+        </row>
+       </tbody>
+      </tgroup>
+     </informaltable>
+
+     <para>No requirements are placed on the content of the value of <property>encoder</property>, if present, but implementors &should; attempt to choose a unique, human-understandable string for this purpose, including version info if appropriate.  Use of the <property>encoder</property> attribute is optional, but strongly encouraged, as it can help with debugging or mitigating implementation bugs or incompatibilities between implementations, should they arise.</para>
+    </section>
+
+    <section>
+     <title>Description</title>
+
+     <para>The <classname>OMRX</classname> chunk must always be the first chunk in the OMRX datastream, and is not permitted anywhere else.  All "toplevel" chunks are children of the <classname>OMRX</classname> chunk.  The corresponding closing (<classname>OMRx</classname>) chunk must, therefore, also always be the last chunk of an OMRX datastream.</para>
+
+     <para>The <property>omrx-version</property> attribute must always be present and, due to the standard attribute ordering requirements, must always be the first attribute following the chunk header.  This combined with the special datatype requirements for the <property>omrx-version</property> attribute leads to a reasonably distinctive initial byte sequence for all OMRX datastreams, including the OMRX specification version in an easily-parseable (and consistently located) form.</para>
+
+    </section>
+
+   </section>
+
+   <!-- ================================================================== -->
+   <section xml:id="chunk.Text">
+    <title>Text</title>
+
+    <variablelist spacing="compact">
+     <varlistentry><term>Tag</term><listitem><classname>Text</classname></listitem></varlistentry>
+     <varlistentry><term>Properties</term>
+      <listitem><simplelist type="inline">
+        <member>Ancillary</member>
+        <member>Copy-OK</member>
+        <member>No-Children</member>
+      </simplelist></listitem>
+     </varlistentry>
+     <varlistentry><term>Parents</term>
+      <listitem><simplelist type="inline">
+        <member><classname>OMRX</classname></member>
+        <member><classname>ScNE</classname></member>
+        <member><classname>MoDL</classname></member>
+        <member><classname>MeSH</classname></member>
+        <member><classname>MaTL</classname></member>
+      </simplelist></listitem>
+     </varlistentry>
+     <varlistentry><term>Children</term>
+      <listitem>(none)</listitem>
+     </varlistentry>
+    </variablelist>
+
+    <section>
+     <title>Global Attributes</title>
+     <informaltable>
+      <tgroup cols="3">
+       <colspec align="left" colwidth="7em"/>
+       <colspec align="center" colwidth="5em"/>
+       <colspec align="left"/>
+       <thead>
+        <row>
+         <entry align="center">Name</entry>
+         <entry>Status</entry>
+         <entry>Meaning</entry>
+        </row>
+       </thead>
+       <tbody>
+        <row>
+         <entry>name</entry>
+         <entry>&required;</entry>
+         <entry>A keyword indicating the type and meaning of text content this chunk contains.  See <xref linkend="text-keywords"/> for more information on standard <classname>Text</classname> chunk keywords and user-defined extensions.</entry>
+        </row>
+       </tbody>
+      </tgroup>
+     </informaltable>
+    </section>
+
+    <section>
+     <title>Local Attributes</title>
+     <informaltable>
+      <tgroup cols="5">
+       <colspec align="center" colwidth="4em"/>
+       <colspec align="left" colwidth="6em"/>
+       <colspec align="center" colwidth="5em"/>
+       <colspec align="center" colwidth="5.1em"/>
+       <colspec align="left"/>
+       <thead>
+        <row>
+         <entry>ID</entry>
+         <entry align="center">Name</entry>
+         <entry>Status</entry>
+         <entry>Datatype</entry>
+         <entry>Meaning</entry>
+        </row>
+       </thead>
+       <tbody>
+        <row>
+         <entry>0x0088</entry>
+         <entry>language</entry>
+         <entry>&required;</entry>
+         <entry>&utf8;</entry>
+         <entry>The ISO-639-3 3-character language code indicating what language the contents of the <property>text</property> attribute are in.</entry>
+        </row>
+        <row>
+         <entry>0x0089</entry>
+         <entry>text</entry>
+         <entry>&required;</entry>
+         <entry>&utf8;</entry>
+         <entry>The text content for the specified <property>name</property> in the specified <property>language</property>.</entry>
+        </row>
+       </tbody>
+      </tgroup>
+     </informaltable>
+
+    </section>
+
+    <section>
+     <title>Description</title>
+
+     <para>The <classname>Text</classname> chunk is used to contain any manner of (human-readable) text information associated with the OMRX datastream or particular chunks within it.  As such, it is allowed to be a child of any block type which supports children.</para>
+
+     <para>The combination of <property>name</property> and <property>language</property> must be unique within any given parent chunk.  That is, for any given chunk, there &mustnot; be more than one <classname>Text</classname> chunk (which is a direct child) with the same <property>name</property> and <property>language</property>.  Multiple <property>language</property> chunks for the same <property>name</property> are allowed, and &should; be used when the same textual information is available in multiple languages (for example, if a particular chunk has a "description" which has been translated into both English and German, it could have both a <classname>Text</classname> chunk with <property>name</property>="description" and <property>language</property>="eng", and also another <classname>Text</classname> chunk with <property>name</property>="description" and <property>language</property>="deu".)</para>
+
+    </section>
+
+   <!-- ================================================================== -->
+<!--
+   <section xml:id="chunk.____">
+    <title>____</title>
+
+    <variablelist spacing="compact">
+     <varlistentry><term>Tag</term><listitem>____</listitem></varlistentry>
+     <varlistentry><term>Properties</term>
+      <listitem><simplelist type="inline">
+        <member>Essential</member>
+        <member>No-Copy</member>
+        <member>Has-Children</member>
+      </simplelist></listitem>
+     </varlistentry>
+     <varlistentry><term>Parents</term>
+      <listitem><simplelist type="inline">
+      </simplelist></listitem>
+     </varlistentry>
+     <varlistentry><term>Children</term>
+      <listitem><simplelist type="inline">
+      </simplelist></listitem>
+     </varlistentry>
+    </variablelist>
+
+    <section>
+     <title>Global Attributes</title>
+     <informaltable>
+      <tgroup cols="3">
+       <colspec align="left" colwidth="7em"/>
+       <colspec align="center" colwidth="5em"/>
+       <colspec align="left"/>
+       <thead>
+        <row>
+         <entry align="center">Name</entry>
+         <entry>Status</entry>
+         <entry>Meaning</entry>
+        </row>
+       </thead>
+       <tbody>
+        <row>
+         <entry>____</entry>
+         <entry>&required;</entry>
+         <entry>____</entry>
+        </row>
+        <row>
+         <entry>____</entry>
+         <entry>&optional;</entry>
+         <entry>____</entry>
+        </row>
+       </tbody>
+      </tgroup>
+     </informaltable>
+    </section>
+
+    <section>
+     <title>Local Attributes</title>
+     <informaltable>
+      <tgroup cols="5">
+       <colspec align="center" colwidth="4em"/>
+       <colspec align="left" colwidth="6em"/>
+       <colspec align="center" colwidth="5em"/>
+       <colspec align="center" colwidth="5.1em"/>
+       <colspec align="left"/>
+       <thead>
+        <row>
+         <entry>ID</entry>
+         <entry align="center">Name</entry>
+         <entry>Status</entry>
+         <entry>Datatype</entry>
+         <entry>Meaning</entry>
+        </row>
+       </thead>
+       <tbody>
+        <row>
+         <entry>0x____</entry>
+         <entry>____</entry>
+         <entry>&optional;</entry>
+         <entry>____</entry>
+         <entry>____</entry>
+        </row>
+       </tbody>
+      </tgroup>
+     </informaltable>
+
+    </section>
+
+    <section>
+     <title>Description</title>
+
+    </section>
+-->
+
+   </section>
+
+  </section>
+ </chapter>
+
+ <appendix xml:id="example-datastream">
+  <title>Example Datastream</title>
+
+  <para>&todo;</para>
+ </appendix>
+
+</book>
